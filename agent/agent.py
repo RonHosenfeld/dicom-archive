@@ -158,7 +158,9 @@ def handle_store(event):
                 series_id  = db.upsert_series(ds, exam_id)
                 inst_id    = db.insert_instance(
                     ds, series_id, blob_key, blob_uri,
-                    size_bytes, checksum, sending_ae
+                    size_bytes, checksum,
+                    sending_ae   = sending_ae,
+                    receiving_ae = AE_TITLE,
                 )
                 if inst_id is None:
                     logger.warning(f"  Duplicate instance {instance_uid} — already in DB, blob overwritten")
@@ -168,11 +170,12 @@ def handle_store(event):
                 # ── Notify routing server (if configured) ─────────────────
                 if inst_id and ROUTER_URL:
                     _notify_router(
-                        instance_id  = inst_id,
-                        instance_uid = instance_uid,
-                        modality     = str(getattr(ds, "Modality", "") or ""),
-                        sending_ae   = sending_ae,
-                        body_part    = str(getattr(ds, "BodyPartExamined", "") or ""),
+                        instance_id   = inst_id,
+                        instance_uid  = instance_uid,
+                        modality      = str(getattr(ds, "Modality", "") or ""),
+                        sending_ae    = sending_ae,
+                        receiving_ae  = AE_TITLE,
+                        body_part     = str(getattr(ds, "BodyPartExamined", "") or ""),
                     )
 
             except Exception as db_err:
@@ -205,7 +208,8 @@ def _quarantine(src_path: str, uid: str, reason: str):
 # ── Router notification ───────────────────────────────────────────────────────
 
 def _notify_router(instance_id: int, instance_uid: str,
-                   modality: str, sending_ae: str, body_part: str):
+                   modality: str, sending_ae: str,
+                   receiving_ae: str, body_part: str):
     """
     POST to the server's /internal/routed endpoint so on_receive routing
     rules fire immediately. Non-blocking best-effort — failure is logged
@@ -219,6 +223,7 @@ def _notify_router(instance_id: int, instance_uid: str,
         "instance_uid": instance_uid,
         "modality":     modality,
         "sending_ae":   sending_ae,
+        "receiving_ae": receiving_ae,
         "body_part":    body_part,
     }).encode()
     try:

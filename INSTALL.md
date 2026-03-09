@@ -341,7 +341,8 @@ automatically or must be triggered manually.
    | Field | Example | Notes |
    |-------|---------|-------|
    | Modality | `MG` | Mammography. Other examples: `CT`, `MR`, `CR`, `DX` |
-   | Sending AE Title | `MAMMO_UNIT` | The AE title of the modality sending the image |
+   | Sending AE Title | `MAMMO_UNIT` | The AE title of the modality/source sending the image |
+   | Receiving AE Title | `ARCHIVE_SITE_A` | The AE title of the agent that accepted the image — useful in multi-site deployments where multiple agents share the same database |
    | Body Part | `BREAST` | As tagged in the DICOM header |
 
    **Auto-route on receipt** — when this toggle is **on**, matching images are forwarded
@@ -377,6 +378,16 @@ automatically or must be triggered manually.
 - Destinations: ✓ Main PACS  ✓ Backup Archive
 - Modality: `MG`
 - Auto-route on receipt: **ON**
+
+**Multi-site: each site agent routes to its own PACS (shared DB):**
+- Rule 1 — Name: `Site A → Site A PACS`
+  - Destinations: ✓ Site A PACS
+  - Receiving AE Title: `ARCHIVE_SITE_A`
+  - Auto-route on receipt: **ON**
+- Rule 2 — Name: `Site B → Site B PACS + Central`
+  - Destinations: ✓ Site B PACS  ✓ Central PACS
+  - Receiving AE Title: `ARCHIVE_SITE_B`
+  - Auto-route on receipt: **ON**
 
 ---
 

@@ -62,8 +62,20 @@ CREATE TABLE IF NOT EXISTS instances (
     rows            INTEGER,                -- (0028,0010)
     columns         INTEGER,               -- (0028,0011)
     received_at     TIMESTAMPTZ DEFAULT NOW(),
-    sending_ae      TEXT                    -- AE title of sender
+    sending_ae      TEXT,                   -- AE title of the modality/sender
+    receiving_ae    TEXT                    -- AE title of the agent that received it
 );
+
+-- Non-destructive migration: add receiving_ae if upgrading from an earlier version
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='instances' AND column_name='receiving_ae'
+  ) THEN
+    ALTER TABLE instances ADD COLUMN receiving_ae TEXT;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_instances_series  ON instances(series_id);
 CREATE INDEX IF NOT EXISTS idx_series_exam        ON series(exam_id);
@@ -171,7 +183,8 @@ class Database:
     def insert_instance(self, ds, series_db_id: int,
                         blob_key: str, blob_uri: str,
                         size_bytes: int, sha256: str,
-                        sending_ae: str) -> int:
+                        sending_ae: str,
+                        receiving_ae: str = None) -> int:
         instance_uid = str(ds.SOPInstanceUID)
         transfer_syntax = str(getattr(ds.file_meta, "TransferSyntaxUID", "")) if hasattr(ds, "file_meta") else None
 
@@ -179,8 +192,9 @@ class Database:
             cur.execute("""
                 INSERT INTO instances (series_id, instance_uid, instance_number,
                                        blob_key, blob_uri, size_bytes, sha256,
-                                       transfer_syntax, rows, columns, sending_ae)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                       transfer_syntax, rows, columns,
+                                       sending_ae, receiving_ae)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (instance_uid) DO NOTHING
                 RETURNING id
             """, (
@@ -195,6 +209,7 @@ class Database:
                 _int(getattr(ds, "Rows", None)),
                 _int(getattr(ds, "Columns", None)),
                 sending_ae,
+                receiving_ae,
             ))
             row = cur.fetchone()
             return row["id"] if row else None  # None = duplicate, already stored

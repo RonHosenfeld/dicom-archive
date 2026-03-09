@@ -34,15 +34,16 @@ class Router:
         self.storage = storage
 
     def evaluate_and_queue(self, instance_id: int, modality: str,
-                           sending_ae: str, body_part: str):
+                           sending_ae: str, receiving_ae: str, body_part: str):
         """
         Called after a new instance is ingested.
         Finds matching routing rules and queues log entries.
         """
         rules = self.db.get_matching_rules(
-            modality or "",
-            sending_ae or "",
-            body_part or ""
+            modality     or "",
+            sending_ae   or "",
+            receiving_ae or "",
+            body_part    or "",
         )
         if not rules:
             logger.debug(f"No routing rules matched for instance {instance_id}")

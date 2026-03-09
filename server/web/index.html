@@ -304,13 +304,20 @@
           <input type="text" id="ruleModality" placeholder="MG" style="text-transform:uppercase">
         </div>
         <div class="form-group" style="margin:0">
-          <label>Sending AE Title</label>
-          <input type="text" id="ruleAE" placeholder="MAMMO_UNIT">
+          <label>Sending AE Title <span class="text-muted" style="font-weight:400;text-transform:none">(source modality)</span></label>
+          <input type="text" id="ruleAE" placeholder="MAMMO_UNIT" style="text-transform:uppercase">
         </div>
       </div>
-      <div class="form-group" style="margin-top:12px;margin-bottom:0">
-        <label>Body Part</label>
-        <input type="text" id="ruleBodyPart" placeholder="BREAST" style="text-transform:uppercase">
+      <div class="form-row" style="margin-top:12px">
+        <div class="form-group" style="margin:0">
+          <label>Receiving AE Title <span class="text-muted" style="font-weight:400;text-transform:none">(which agent)</span></label>
+          <input type="text" id="ruleReceivingAE" placeholder="ARCHIVE_SITE_A" style="text-transform:uppercase">
+          <div class="form-hint">Filter by the agent that accepted the image — useful for multi-site deployments</div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Body Part</label>
+          <input type="text" id="ruleBodyPart" placeholder="BREAST" style="text-transform:uppercase">
+        </div>
       </div>
     </div>
 
@@ -766,9 +773,10 @@ async function loadRules() {
 
   tbody.innerHTML = state.rules.map(r => {
     const chips = [];
-    if (r.match_modality)  chips.push(`Modality: ${r.match_modality}`);
-    if (r.match_ae_title)  chips.push(`AE: ${r.match_ae_title}`);
-    if (r.match_body_part) chips.push(`Body: ${r.match_body_part}`);
+    if (r.match_modality)     chips.push(`Modality: ${r.match_modality}`);
+    if (r.match_ae_title)     chips.push(`From: ${r.match_ae_title}`);
+    if (r.match_receiving_ae) chips.push(`Via: ${r.match_receiving_ae}`);
+    if (r.match_body_part)    chips.push(`Body: ${r.match_body_part}`);
 
     // destinations is a JSON array from the DB aggregation
     const dests = typeof r.destinations === 'string' ? JSON.parse(r.destinations) : (r.destinations || []);
@@ -848,17 +856,18 @@ function openRuleModal(id = null) {
     const dests = typeof r.destinations === 'string' ? JSON.parse(r.destinations) : (r.destinations || []);
     const selectedIds = dests.map(d => d.id);
     renderRuleDestList(selectedIds);
-    document.getElementById('ruleName').value        = r.name;
-    document.getElementById('rulePriority').value    = r.priority;
-    document.getElementById('ruleModality').value    = r.match_modality || '';
-    document.getElementById('ruleAE').value          = r.match_ae_title || '';
-    document.getElementById('ruleBodyPart').value    = r.match_body_part || '';
-    document.getElementById('ruleOnReceive').checked = r.on_receive;
-    document.getElementById('ruleEnabled').checked   = r.enabled;
-    document.getElementById('ruleDesc').value        = r.description || '';
+    document.getElementById('ruleName').value          = r.name;
+    document.getElementById('rulePriority').value      = r.priority;
+    document.getElementById('ruleModality').value      = r.match_modality || '';
+    document.getElementById('ruleAE').value            = r.match_ae_title || '';
+    document.getElementById('ruleReceivingAE').value   = r.match_receiving_ae || '';
+    document.getElementById('ruleBodyPart').value      = r.match_body_part || '';
+    document.getElementById('ruleOnReceive').checked   = r.on_receive;
+    document.getElementById('ruleEnabled').checked     = r.enabled;
+    document.getElementById('ruleDesc').value          = r.description || '';
   } else {
     renderRuleDestList([]);
-    ['ruleName','ruleModality','ruleAE','ruleBodyPart','ruleDesc'].forEach(i => document.getElementById(i).value = '');
+    ['ruleName','ruleModality','ruleAE','ruleReceivingAE','ruleBodyPart','ruleDesc'].forEach(i => document.getElementById(i).value = '');
     document.getElementById('rulePriority').value    = '100';
     document.getElementById('ruleOnReceive').checked = false;
     document.getElementById('ruleEnabled').checked   = true;
@@ -874,9 +883,10 @@ async function saveRule() {
     destination_ids: destIds,
     priority:        parseInt(document.getElementById('rulePriority').value),
     enabled:         document.getElementById('ruleEnabled').checked,
-    match_modality:  document.getElementById('ruleModality').value.trim().toUpperCase() || null,
-    match_ae_title:  document.getElementById('ruleAE').value.trim().toUpperCase() || null,
-    match_body_part: document.getElementById('ruleBodyPart').value.trim().toUpperCase() || null,
+    match_modality:      document.getElementById('ruleModality').value.trim().toUpperCase() || null,
+    match_ae_title:      document.getElementById('ruleAE').value.trim().toUpperCase() || null,
+    match_receiving_ae:  document.getElementById('ruleReceivingAE').value.trim().toUpperCase() || null,
+    match_body_part:     document.getElementById('ruleBodyPart').value.trim().toUpperCase() || null,
     on_receive:      document.getElementById('ruleOnReceive').checked,
     description:     document.getElementById('ruleDesc').value.trim() || null,
   };

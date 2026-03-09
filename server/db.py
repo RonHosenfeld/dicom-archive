@@ -29,20 +29,32 @@ CREATE TABLE IF NOT EXISTS ae_destinations (
 );
 
 CREATE TABLE IF NOT EXISTS routing_rules (
-    id              SERIAL PRIMARY KEY,
-    name            TEXT NOT NULL,
-    priority        INTEGER NOT NULL DEFAULT 100,
-    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    id                  SERIAL PRIMARY KEY,
+    name                TEXT NOT NULL,
+    priority            INTEGER NOT NULL DEFAULT 100,
+    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
     -- Match criteria (NULL = wildcard / match anything)
-    match_modality  TEXT,
-    match_ae_title  TEXT,
-    match_body_part TEXT,
+    match_modality      TEXT,   -- e.g. "MG"
+    match_ae_title      TEXT,   -- sending AE (modality / source)
+    match_receiving_ae  TEXT,   -- receiving AE (which agent accepted it)
+    match_body_part     TEXT,   -- e.g. "BREAST"
     -- Behaviour
-    on_receive      BOOLEAN NOT NULL DEFAULT FALSE,  -- auto-route on ingest
-    description     TEXT,
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ DEFAULT NOW()
+    on_receive          BOOLEAN NOT NULL DEFAULT FALSE,
+    description         TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Non-destructive migration for existing deployments
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='routing_rules' AND column_name='match_receiving_ae'
+  ) THEN
+    ALTER TABLE routing_rules ADD COLUMN match_receiving_ae TEXT;
+  END IF;
+END $$;
 
 -- Many-to-many: one rule can fan out to multiple destinations
 CREATE TABLE IF NOT EXISTS rule_destinations (
@@ -277,15 +289,16 @@ class DB:
 
     def create_rule(self, name, destination_ids: list, priority=100,
                     match_modality=None, match_ae_title=None,
-                    match_body_part=None, on_receive=False, description=None):
+                    match_receiving_ae=None, match_body_part=None,
+                    on_receive=False, description=None):
         with self.cursor() as cur:
             cur.execute("""
                 INSERT INTO routing_rules
                     (name, priority, match_modality, match_ae_title,
-                     match_body_part, on_receive, description)
-                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *
+                     match_receiving_ae, match_body_part, on_receive, description)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *
             """, (name, priority, match_modality, match_ae_title,
-                  match_body_part, on_receive, description))
+                  match_receiving_ae, match_body_part, on_receive, description))
             rule = cur.fetchone()
             self._set_rule_destinations(cur, rule["id"], destination_ids)
             return rule
@@ -314,10 +327,12 @@ class DB:
         with self.cursor() as cur:
             cur.execute("DELETE FROM routing_rules WHERE id = %s", (rule_id,))
 
-    def get_matching_rules(self, modality: str, sending_ae: str, body_part: str):
+    def get_matching_rules(self, modality: str, sending_ae: str,
+                           receiving_ae: str, body_part: str):
         """
         Return enabled on_receive rules matching this instance's metadata,
         expanded to one row per destination.
+        All match fields are NULL-tolerant wildcards.
         """
         with self.cursor() as cur:
             cur.execute("""
@@ -331,11 +346,13 @@ class DB:
                 WHERE r.enabled    = TRUE
                   AND r.on_receive = TRUE
                   AND d.enabled    = TRUE
-                  AND (r.match_modality  IS NULL OR r.match_modality  = %s)
-                  AND (r.match_ae_title  IS NULL OR r.match_ae_title  = %s)
-                  AND (r.match_body_part IS NULL OR r.match_body_part = %s)
+                  AND (r.match_modality     IS NULL OR r.match_modality     = %s)
+                  AND (r.match_ae_title     IS NULL OR r.match_ae_title     = %s)
+                  AND (r.match_receiving_ae IS NULL OR r.match_receiving_ae = %s)
+                  AND (r.match_body_part    IS NULL OR r.match_body_part    = %s)
                 ORDER BY r.priority, r.id
-            """, (modality or None, sending_ae or None, body_part or None))
+            """, (modality or None, sending_ae or None,
+                  receiving_ae or None, body_part or None))
             return cur.fetchall()
 
     # ── Routing log ───────────────────────────────────────────────────────────
