@@ -1,0 +1,229 @@
+"""
+agent.py — DICOM Archive Ingest Agent
+
+Accepts DICOM C-STORE associations from any modality (optimised for mammography).
+For each received instance:
+  1. Validates it is a real DICOM file with pixel data
+  2. Checksums it (SHA-256) — lossless verification
+  3. Stores the raw file to the configured blob backend (local / S3 / Azure)
+  4. Indexes key metadata in Postgres (optional)
+  5. Acknowledges success back to the sender
+
+The file is never modified — the original DICOM bytes are what gets archived.
+DICOM is only used at the network edge; after receipt it's just a file.
+"""
+
+import os
+import sys
+import logging
+import tempfile
+import shutil
+from pathlib import Path
+from datetime import datetime
+
+from dotenv import load_dotenv
+load_dotenv()
+
+import pydicom
+from pynetdicom import AE, evt, AllStoragePresentationContexts, ALL_TRANSFER_SYNTAXES
+from pynetdicom.sop_class import Verification
+
+from storage import get_storage_backend, sha256_of_file
+from database import get_database
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("agent.log"),
+    ]
+)
+logger = logging.getLogger("dicom-agent")
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+AE_TITLE      = os.getenv("AE_TITLE",     "ARCHIVE_SCP")
+LISTEN_PORT   = int(os.getenv("LISTEN_PORT", "11112"))
+LISTEN_HOST   = os.getenv("LISTEN_HOST",  "0.0.0.0")
+QUARANTINE    = Path(os.getenv("QUARANTINE_PATH", "./quarantine"))
+MAX_BYTES     = int(os.getenv("MAX_FILE_BYTES", "0"))  # 0 = unlimited
+
+QUARANTINE.mkdir(parents=True, exist_ok=True)
+
+# ── Storage + DB (initialised once at startup) ────────────────────────────────
+
+storage = get_storage_backend()
+db      = get_database()
+
+# ── Blob key builder ──────────────────────────────────────────────────────────
+
+def make_blob_key(ds) -> str:
+    """
+    Hierarchical key:  StudyDate / StudyUID / SeriesUID / SOPInstanceUID.dcm
+    Keeps things organised without requiring any DICOM infrastructure.
+    """
+    study_date   = str(getattr(ds, "StudyDate", "UNKNOWN"))
+    study_uid    = str(getattr(ds, "StudyInstanceUID",  "unknown-study"))
+    series_uid   = str(getattr(ds, "SeriesInstanceUID", "unknown-series"))
+    instance_uid = str(ds.SOPInstanceUID)
+    return f"{study_date}/{study_uid}/{series_uid}/{instance_uid}.dcm"
+
+
+# ── DICOM validation ──────────────────────────────────────────────────────────
+
+def validate(ds, path: str) -> tuple[bool, str]:
+    """Basic sanity checks. Returns (ok, reason)."""
+
+    # Must have the mandatory UIDs
+    for tag in ("SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID"):
+        if not hasattr(ds, tag):
+            return False, f"Missing {tag}"
+
+    # Must have pixel data
+    if not hasattr(ds, "PixelData"):
+        return False, "No PixelData"
+
+    # Size guard
+    if MAX_BYTES > 0:
+        size = Path(path).stat().st_size
+        if size > MAX_BYTES:
+            return False, f"File {size} bytes exceeds limit {MAX_BYTES}"
+
+    # Mammography-specific: warn (not reject) if laterality/view missing
+    modality = str(getattr(ds, "Modality", ""))
+    if modality == "MG":
+        if not getattr(ds, "Laterality", None):
+            logger.warning("Mammo image missing Laterality tag")
+        if not getattr(ds, "ViewPosition", None):
+            logger.warning("Mammo image missing ViewPosition tag")
+
+    return True, "ok"
+
+
+# ── Core handler ──────────────────────────────────────────────────────────────
+
+def handle_store(event):
+    """
+    Called for every C-STORE request received.
+    Runs synchronously inside the association thread — keep it fast.
+    Heavy lifting (upload) happens here but could be queued for async in v2.
+    """
+    ds          = event.dataset
+    ds.file_meta = event.file_meta  # attach file meta for transfer syntax access
+    sending_ae  = event.assoc.requestor.ae_title.strip()
+
+    instance_uid = str(ds.SOPInstanceUID)
+    logger.info(f"Receiving  {instance_uid}  from  [{sending_ae}]")
+
+    # Write to a temp file first (we want the raw bytes exactly as received)
+    tmp_dir  = tempfile.mkdtemp(prefix="dcm_ingest_")
+    tmp_path = os.path.join(tmp_dir, f"{instance_uid}.dcm")
+
+    try:
+        # Save with pydicom — preserves original transfer syntax, no re-encode
+        pydicom.dcmwrite(tmp_path, ds, write_like_original=True)
+
+        # ── Validate ──────────────────────────────────────────────────────────
+        ok, reason = validate(ds, tmp_path)
+        if not ok:
+            logger.error(f"Validation FAILED for {instance_uid}: {reason}")
+            _quarantine(tmp_path, instance_uid, reason)
+            return 0xA700  # C-STORE failure: out of resources (generic refusal)
+
+        # ── Checksum ──────────────────────────────────────────────────────────
+        checksum   = sha256_of_file(tmp_path)
+        size_bytes = Path(tmp_path).stat().st_size
+        logger.info(f"  SHA-256: {checksum}  size: {size_bytes:,} bytes")
+
+        # ── Blob storage ──────────────────────────────────────────────────────
+        blob_key = make_blob_key(ds)
+        blob_uri = storage.store(tmp_path, blob_key)
+
+        # ── Postgres index ────────────────────────────────────────────────────
+        if db:
+            try:
+                patient_id = db.upsert_patient(ds)
+                exam_id    = db.upsert_exam(ds, patient_id)
+                series_id  = db.upsert_series(ds, exam_id)
+                inst_id    = db.insert_instance(
+                    ds, series_id, blob_key, blob_uri,
+                    size_bytes, checksum, sending_ae
+                )
+                if inst_id is None:
+                    logger.warning(f"  Duplicate instance {instance_uid} — already in DB, blob overwritten")
+                else:
+                    logger.info(f"  DB record id={inst_id}")
+            except Exception as db_err:
+                # DB failure is logged but does NOT fail the C-STORE —
+                # the file is safely in blob storage; DB can be repaired later.
+                logger.error(f"  DB write failed (file is safe in storage): {db_err}")
+
+        logger.info(f"  ✓ Stored  {blob_key}")
+        return 0x0000  # C-STORE success
+
+    except Exception as e:
+        logger.exception(f"Unexpected error processing {instance_uid}: {e}")
+        _quarantine(tmp_path, instance_uid, str(e))
+        return 0xA700  # failure
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _quarantine(src_path: str, uid: str, reason: str):
+    """Move a problem file to the quarantine folder for manual review."""
+    dest = QUARANTINE / f"{uid}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.dcm"
+    try:
+        shutil.move(src_path, dest)
+        logger.warning(f"  → Quarantined {dest}  reason: {reason}")
+    except Exception as e:
+        logger.error(f"  Could not quarantine {src_path}: {e}")
+
+
+# ── C-ECHO handler (ping/verification) ───────────────────────────────────────
+
+def handle_echo(event):
+    """Respond to C-ECHO so the modality can verify connectivity."""
+    logger.info(f"C-ECHO from [{event.assoc.requestor.ae_title.strip()}]")
+    return 0x0000
+
+
+# ── Build and start the AE ────────────────────────────────────────────────────
+
+def run():
+    ae = AE(ae_title=AE_TITLE)
+
+    # Accept C-ECHO (Verification)
+    ae.add_supported_context(Verification)
+
+    # Accept ALL storage SOP classes with ALL transfer syntaxes
+    # This means we accept whatever the modality sends — no negotiation failures.
+    # The raw bytes are preserved exactly as transmitted.
+    for cx in AllStoragePresentationContexts:
+        ae.add_supported_context(cx.abstract_syntax, ALL_TRANSFER_SYNTAXES)
+
+    handlers = [
+        (evt.EVT_C_STORE, handle_store),
+        (evt.EVT_C_ECHO,  handle_echo),
+    ]
+
+    logger.info(f"╔══════════════════════════════════════════╗")
+    logger.info(f"║  DICOM Archive Agent starting            ║")
+    logger.info(f"║  AE Title : {AE_TITLE:<30}║")
+    logger.info(f"║  Listening: {LISTEN_HOST}:{LISTEN_PORT:<26}║")
+    logger.info(f"║  Storage  : {os.getenv('STORAGE_BACKEND','local'):<30}║")
+    logger.info(f"║  Database : {'enabled' if db else 'disabled (file-only mode)':<30}║")
+    logger.info(f"╚══════════════════════════════════════════╝")
+
+    ae.start_server(
+        (LISTEN_HOST, LISTEN_PORT),
+        evt_handlers=handlers,
+        block=True,       # run forever
+    )
+
+
+if __name__ == "__main__":
+    run()
