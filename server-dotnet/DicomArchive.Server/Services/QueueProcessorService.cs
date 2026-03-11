@@ -2,11 +2,11 @@ namespace DicomArchive.Server.Services;
 
 /// <summary>
 /// Background service that processes the routing queue every 30 seconds.
-/// This is the safety net — routes that weren't triggered immediately by
-/// the agent's notification will be picked up here.
+/// Uses IServiceScopeFactory to create a fresh scope per run — BackgroundService
+/// is Singleton, so it cannot directly inject Scoped services like RouterService.
 /// </summary>
 public class QueueProcessorService(
-    RouterService router,
+    IServiceScopeFactory scopeFactory,
     ILogger<QueueProcessorService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -19,6 +19,8 @@ public class QueueProcessorService(
 
             try
             {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var router = scope.ServiceProvider.GetRequiredService<RouterService>();
                 await router.ProcessQueueAsync();
             }
             catch (OperationCanceledException)
