@@ -242,11 +242,44 @@ def _int(val):
         return None
 
 
+def _parse_aspire_connection_string(cs: str) -> str:
+    """Convert ADO.NET connection string (Aspire format) to psycopg2 URL.
+
+    Aspire injects:  Host=postgres;Database=dicom-archive;Username=postgres;Password=secret
+    psycopg2 wants: postgresql://postgres:secret@postgres:5432/dicom-archive
+    """
+    parts = {}
+    for kv in cs.split(";"):
+        kv = kv.strip()
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            parts[k.strip().lower()] = v.strip()
+
+    host     = parts.get("host", "localhost")
+    port     = parts.get("port", "5432")
+    database = parts.get("database", "")
+    username = parts.get("username", parts.get("user id", "postgres"))
+    password = parts.get("password", "")
+
+    from urllib.parse import quote_plus
+    return f"postgresql://{quote_plus(username)}:{quote_plus(password)}@{host}:{port}/{database}"
+
+
 def get_database() -> Optional["Database"]:
+    # 1. Standard Docker Compose / manual format
     dsn = os.getenv("DATABASE_URL", "")
+
+    # 2. Aspire-injected format: ConnectionStrings__dicom-archive (ADO.NET style)
+    if not dsn:
+        aspire_cs = os.getenv("ConnectionStrings__dicom-archive", "")
+        if aspire_cs:
+            logger.info("Using Aspire-injected connection string (ConnectionStrings__dicom-archive)")
+            dsn = _parse_aspire_connection_string(aspire_cs)
+
     if not dsn:
         logger.info("No DATABASE_URL set — running without Postgres index")
         return None
+
     db = Database(dsn)
     db.connect()
     return db
