@@ -3,4 +3,12 @@ __pycache__/
 *.pyc
 data/
 quarantine/
+
+# .NET
+**/bin/
+**/obj/
+**/.vs/
+*.user
+*.suo
+.DS_Store
 agent.log

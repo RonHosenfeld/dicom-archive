@@ -1,0 +1,20 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.1.2">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DicomArchive.ServiceDefaults\DicomArchive.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\server-dotnet\DicomArchive.Server\DicomArchive.Server.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="13.1.2" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>fa1d62cc-2bc9-42d6-a802-54ef1c2187ce</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

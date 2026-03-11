@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/aspire/">
+    <Project Path="aspire/DicomArchive.AppHost/DicomArchive.AppHost.csproj" />
+    <Project Path="aspire/DicomArchive.ServiceDefaults/DicomArchive.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/server-dotnet/">
+    <Project Path="server-dotnet/DicomArchive.Server/DicomArchive.Server.csproj" />
+  </Folder>
+</Solution>
