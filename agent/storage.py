@@ -85,20 +85,39 @@ class S3Storage(StorageBackend):
 
 class AzureStorage(StorageBackend):
     def __init__(self, connection_string: str, container: str):
+        import time
         from azure.storage.blob import BlobServiceClient
+        from azure.core.exceptions import ResourceExistsError
+        # Strip ";ContainerName=..." appended by Aspire blob resource references
+        connection_string = ";".join(
+            p for p in connection_string.split(";")
+            if not p.startswith("ContainerName=")
+        )
         self.client = BlobServiceClient.from_connection_string(connection_string)
         self.container = container
-        # Ensure container exists
-        try:
-            self.client.create_container(container)
-        except Exception:
-            pass  # already exists
+        # Ensure container exists (retry — Azurite may still be starting)
+        container_client = self.client.get_container_client(container)
+        for attempt in range(1, 6):
+            try:
+                container_client.create_container()
+                logger.info(f"[azure] created container '{container}'")
+                break
+            except ResourceExistsError:
+                logger.info(f"[azure] container '{container}' already exists")
+                break
+            except Exception as exc:
+                logger.warning(f"[azure] container create attempt {attempt}/5 failed: {exc}")
+                if attempt < 5:
+                    time.sleep(2)
+                else:
+                    raise
 
     def store(self, local_path: str, blob_key: str) -> str:
+        from azure.storage.blob import ContentSettings
         blob = self.client.get_blob_client(container=self.container, blob=blob_key)
         with open(local_path, "rb") as f:
             blob.upload_blob(f, overwrite=True,
-                             content_settings={"content_type": "application/dicom"})
+                             content_settings=ContentSettings(content_type="application/dicom"))
         uri = f"https://{self.client.account_name}.blob.core.windows.net/{self.container}/{blob_key}"
         logger.info(f"[azure] stored → {uri}")
         return uri

@@ -1,3 +1,5 @@
+using Azure.Storage.Blobs;
+
 namespace DicomArchive.Server.Services;
 
 /// <summary>
@@ -8,6 +10,8 @@ public class StorageService(IConfiguration config, ILogger<StorageService> logge
 {
     private readonly string _backend = config["STORAGE_BACKEND"] ?? "local";
     private readonly string _localBase = config["LOCAL_STORAGE_PATH"] ?? "./received";
+    private readonly string _azureContainer = config["AZURE_CONTAINER"] ?? "dicom-files";
+    private BlobContainerClient? _blobContainer;
 
     public async Task<string> FetchToTempAsync(string blobKey)
     {
@@ -50,11 +54,37 @@ public class StorageService(IConfiguration config, ILogger<StorageService> logge
             "then implement FetchS3Async using AmazonS3Client.");
     }
 
-    private Task FetchAzureAsync(string blobKey, string dest)
+    private async Task FetchAzureAsync(string blobKey, string dest)
     {
-        // Azure support requires adding Azure.Storage.Blobs package.
-        throw new NotImplementedException(
-            "Azure storage: add PackageReference for Azure.Storage.Blobs to DicomArchive.Server.csproj " +
-            "then implement FetchAzureAsync using BlobServiceClient.");
+        var container = GetBlobContainer();
+        var blobClient = container.GetBlobClient(blobKey);
+
+        if (!await blobClient.ExistsAsync())
+            throw new FileNotFoundException($"Azure blob not found: {blobKey}");
+
+        await using var stream = File.OpenWrite(dest);
+        await blobClient.DownloadToAsync(stream);
+    }
+
+    private BlobContainerClient GetBlobContainer()
+    {
+        if (_blobContainer is not null)
+            return _blobContainer;
+
+        // Aspire injects "ConnectionStrings:blobs"; fall back to env var
+        var connectionString = config.GetConnectionString("blobs")
+            ?? config["AZURE_STORAGE_CONNECTION_STRING"]
+            ?? throw new InvalidOperationException(
+                "Azure storage requires ConnectionStrings:blobs or AZURE_STORAGE_CONNECTION_STRING");
+
+        // Strip ";ContainerName=..." appended by Aspire blob resource references
+        connectionString = string.Join(';',
+            connectionString.Split(';')
+                .Where(p => !p.StartsWith("ContainerName=", StringComparison.OrdinalIgnoreCase)));
+
+        var serviceClient = new BlobServiceClient(connectionString);
+        _blobContainer = serviceClient.GetBlobContainerClient(_azureContainer);
+        _blobContainer.CreateIfNotExists();
+        return _blobContainer;
     }
 }
