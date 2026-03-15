@@ -87,6 +87,28 @@ public class StorageService(IConfiguration config, ILogger<StorageService> logge
         }
     }
 
+    /// <summary>
+    /// Returns the permanent retrieval URI for a stored blob.
+    /// Local: absolute file path; Azure: blob URL; S3: S3 URI.
+    /// </summary>
+    public string GetBlobUri(string blobKey)
+    {
+        switch (_backend.ToLower())
+        {
+            case "local":
+                return Path.GetFullPath(Path.Combine(_localBase, blobKey.Replace('/', Path.DirectorySeparatorChar)));
+            case "azure":
+                var container = GetBlobContainer();
+                return container.GetBlobClient(blobKey).Uri.ToString();
+            case "s3":
+                var bucket = config["S3_BUCKET"] ?? "dicom-files";
+                var region = config["AWS_REGION"] ?? "us-east-1";
+                return $"s3://{bucket}/{blobKey}";
+            default:
+                return blobKey;
+        }
+    }
+
     public async Task<string> FetchToTempAsync(string blobKey)
     {
         var tmp = Path.Combine(Path.GetTempPath(), $"dcm_{Guid.NewGuid():N}.dcm");

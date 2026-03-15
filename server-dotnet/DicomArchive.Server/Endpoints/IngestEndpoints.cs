@@ -194,6 +194,7 @@ public static class IngestEndpoints
     static async Task<IResult> Confirm(
         ArchiveDbContext db,
         RouterService router,
+        StorageService storage,
         ILogger<Program> logger,
         [FromBody] ConfirmRequest body)
     {
@@ -214,6 +215,8 @@ public static class IngestEndpoints
         }
 
         instance.Status = "stored";
+        if (!string.IsNullOrEmpty(instance.BlobKey))
+            instance.BlobUri = storage.GetBlobUri(instance.BlobKey);
         await db.SaveChangesAsync();
 
         // ── Trigger routing engine ──
