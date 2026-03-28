@@ -56,4 +56,43 @@ builder.AddDockerfile("dicom-agent", "../../agent")
     .WithBindMount("../../data/quarantine", "/data/quarantine")
     .WithEndpoint(port: 11112, targetPort: 11112, scheme: "tcp", name: "dicom");
 
+// ── Remote Agents (pull from Service Bus, forward to test PACS) ─────────────
+for (int i = 1; i <= 3; i++)
+{
+    var agentName = $"dicom-agent-remote-{i}";
+    var aeTitle = $"REMOTE_AGENT_{i}";
+    var hostPort = 11112 + i; // 11113, 11114, 11115
+
+    builder.AddDockerfile(agentName, "../../agent")
+        .WaitFor(server)
+        .WaitFor(storage)
+        .WaitFor(serviceBus)
+        .WithEnvironment("AE_TITLE",                     aeTitle)
+        .WithEnvironment("LISTEN_PORT",                   "11112")
+        .WithEnvironment("SERVER_URL",                    server.GetEndpoint("web"))
+        .WithEnvironment("AGENT_API_KEY",                 agentApiKey)
+        .WithEnvironment("UPLOAD_WORKERS",                "2")
+        .WithEnvironment("STAGING_PATH",                  "/data/staging")
+        .WithEnvironment("REMOTE_ROUTING_ENABLED",        "true")
+        .WithEnvironment("SERVICE_BUS_CONNECTION_STRING", serviceBus.Resource.ConnectionStringExpression)
+        .WithEnvironment("PULL_WORKERS",                  "2")
+        .WithEnvironment("SEQ_URL",                       seq.GetEndpoint("http"))
+        .WithBindMount($"../../data/remote-{i}-staging",    "/data/staging")
+        .WithBindMount($"../../data/remote-{i}-quarantine", "/data/quarantine")
+        .WithEndpoint(port: hostPort, targetPort: 11112, scheme: "tcp", name: "dicom");
+}
+
+// ── Test PACS (lightweight DICOM sinks for verifying remote routing) ────────
+for (int i = 1; i <= 3; i++)
+{
+    var pacsName = $"test-pacs-{i}";
+    var aeTitle = $"TEST_PACS_{i}";
+    var hostPort = 10103 + i; // 10104, 10105, 10106
+
+    builder.AddDockerfile(pacsName, "../../tools/test-pacs")
+        .WithEnvironment("AE_TITLE",     aeTitle)
+        .WithEnvironment("LISTEN_PORT",  "104")
+        .WithEndpoint(port: hostPort, targetPort: 104, scheme: "tcp", name: "dicom");
+}
+
 builder.Build().Run();
