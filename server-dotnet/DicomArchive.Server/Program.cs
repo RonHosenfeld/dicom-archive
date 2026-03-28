@@ -38,6 +38,8 @@ builder.Services.AddAuthorizationBuilder()
               .AddAuthenticationSchemes(ApiKeyAuthHandler.SchemeName));
 
 // ── Application services ──────────────────────────────────────────────────────
+builder.Services.AddSingleton<ServiceBusPublisherService>();
+builder.Services.AddSingleton<AgentSubscriptionService>();
 builder.Services.AddScoped<RouterService>();
 builder.Services.AddScoped<StorageService>();
 builder.Services.AddHostedService<QueueProcessorService>();

@@ -138,6 +138,58 @@ public static class SchemaInitializer
           END IF;
         END $$;
 
+        -- Non-destructive migration: add routing_mode + remote_agent_ae to ae_destinations
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='ae_destinations' AND column_name='routing_mode'
+          ) THEN
+            ALTER TABLE ae_destinations ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'direct';
+            ALTER TABLE ae_destinations ADD COLUMN remote_agent_ae TEXT;
+          END IF;
+        END $$;
+
+        -- Non-destructive migration: add service_bus_message_id + study_uid to routing_log
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='routing_log' AND column_name='service_bus_message_id'
+          ) THEN
+            ALTER TABLE routing_log ADD COLUMN service_bus_message_id TEXT;
+            ALTER TABLE routing_log ADD COLUMN study_uid TEXT;
+          END IF;
+        END $$;
+
+        -- Remote routing log (study-level tracking for Service Bus routing)
+        CREATE TABLE IF NOT EXISTS remote_routing_log (
+            id                     SERIAL PRIMARY KEY,
+            study_uid              TEXT NOT NULL,
+            rule_id                INTEGER REFERENCES routing_rules(id) ON DELETE SET NULL,
+            destination_id         INTEGER REFERENCES ae_destinations(id) ON DELETE SET NULL,
+            remote_agent_ae        TEXT,
+            status                 TEXT NOT NULL DEFAULT 'published',
+            service_bus_message_id TEXT,
+            instance_count         INTEGER NOT NULL DEFAULT 0,
+            instances_delivered    INTEGER NOT NULL DEFAULT 0,
+            last_error             TEXT,
+            published_at           TIMESTAMPTZ DEFAULT NOW(),
+            completed_at           TIMESTAMPTZ
+        );
+
+        -- Non-destructive migration: add regex pattern columns to routing_rules
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='routing_rules' AND column_name='match_description_pattern'
+          ) THEN
+            ALTER TABLE routing_rules ADD COLUMN match_description_pattern TEXT;
+            ALTER TABLE routing_rules ADD COLUMN match_referring_pattern TEXT;
+          END IF;
+        END $$;
+
         -- Trigram extension + indexes for fast ILIKE searches
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
 

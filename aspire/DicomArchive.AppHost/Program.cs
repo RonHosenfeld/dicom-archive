@@ -15,6 +15,11 @@ var storage = builder.AddAzureStorage("azure-storage")
         emulator.WithArgs("--disableProductStyleUrl"));  // path-style URLs for Docker networking
 var blobs = storage.AddBlobs("blobs");
 
+// ── Azure Service Bus (emulator for local dev) ──────────────────────────────
+var serviceBus = builder.AddAzureServiceBus("service-bus")
+    .RunAsEmulator();
+serviceBus.AddServiceBusTopic("routed-exams");
+
 // ── Seq (structured logging) ─────────────────────────────────────────────────
 var seq = builder.AddSeq("seq")
     .ExcludeFromManifest();                 // ephemeral — no volume, resets each run
@@ -25,6 +30,8 @@ var server = builder.AddProject<Projects.DicomArchive_Server>("dicom-server")
     .WaitFor(postgres)
     .WithReference(blobs)
     .WaitFor(storage)
+    .WithReference(serviceBus)
+    .WaitFor(serviceBus)
     .WithReference(seq)
     .WithEnvironment("STORAGE_BACKEND",  "azure")
     .WithEnvironment("AZURE_CONTAINER",  "dicom-files")

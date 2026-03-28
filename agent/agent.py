@@ -39,6 +39,7 @@ from pynetdicom import AE, evt, AllStoragePresentationContexts, ALL_TRANSFER_SYN
 from pynetdicom.sop_class import Verification
 
 from uploader import UploadEngine, sha256_of_file
+from pull_engine import PullEngine
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -81,6 +82,11 @@ SERVER_URL     = os.getenv("SERVER_URL", os.getenv("ROUTER_URL", "")).rstrip("/"
 AGENT_API_KEY  = os.getenv("AGENT_API_KEY", "")
 UPLOAD_WORKERS = int(os.getenv("UPLOAD_WORKERS", "4"))
 
+REMOTE_ROUTING_ENABLED = os.getenv("REMOTE_ROUTING_ENABLED", "false").lower() in ("true", "1", "yes")
+SERVICE_BUS_CONNECTION_STRING = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
+SB_ROUTED_EXAMS_TOPIC = os.getenv("SB_ROUTED_EXAMS_TOPIC", "routed-exams")
+PULL_WORKERS = int(os.getenv("PULL_WORKERS", "2"))
+
 QUARANTINE.mkdir(parents=True, exist_ok=True)
 STAGING_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -121,10 +127,11 @@ def _server_post(path: str, payload: dict, label: str = ""):
 
 def register_with_server():
     result = _server_post("/ingest/register", {
-        "ae_title":        AE_TITLE,
-        "host":            _get_host(),
-        "storage_backend": "edge",
-        "version":         AGENT_VERSION,
+        "ae_title":                AE_TITLE,
+        "host":                    _get_host(),
+        "storage_backend":         "edge",
+        "version":                 AGENT_VERSION,
+        "remote_routing_enabled":  REMOTE_ROUTING_ENABLED,
     }, label="registration")
     if result and result.get("ok"):
         logger.info(f"Registered with server as [{AE_TITLE}]")
@@ -348,6 +355,32 @@ def run():
     if SERVER_URL and AGENT_API_KEY:
         register_with_server()
         _instance_counter = _heartbeat_loop(interval=60)
+
+    # ── Start pull engine for remote routing ──
+    if REMOTE_ROUTING_ENABLED and SERVICE_BUS_CONNECTION_STRING:
+        if _event_loop is None:
+            _event_loop = asyncio.new_event_loop()
+            loop_thread = threading.Thread(
+                target=lambda: (asyncio.set_event_loop(_event_loop), _event_loop.run_forever()),
+                daemon=True,
+                name="pull-loop",
+            )
+            loop_thread.start()
+        subscription = f"agent-{AE_TITLE.lower()}"
+        pull_engine = PullEngine(
+            servicebus_conn=SERVICE_BUS_CONNECTION_STRING,
+            topic=SB_ROUTED_EXAMS_TOPIC,
+            subscription=subscription,
+            server_url=SERVER_URL,
+            api_key=AGENT_API_KEY,
+            ae_title=AE_TITLE,
+            workers=PULL_WORKERS,
+        )
+        asyncio.run_coroutine_threadsafe(pull_engine.start(), _event_loop)
+        logger.info("Pull engine started (%d workers, topic=%s, sub=%s)",
+                     PULL_WORKERS, SB_ROUTED_EXAMS_TOPIC, subscription)
+    elif REMOTE_ROUTING_ENABLED:
+        logger.warning("REMOTE_ROUTING_ENABLED=true but SERVICE_BUS_CONNECTION_STRING not set")
 
     ae.start_server(
         (LISTEN_HOST, LISTEN_PORT),

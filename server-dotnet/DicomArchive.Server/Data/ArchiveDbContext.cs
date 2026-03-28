@@ -12,6 +12,7 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
     public DbSet<RoutingRule> RoutingRules => Set<RoutingRule>();
     public DbSet<RuleDestination> RuleDestinations => Set<RuleDestination>();
     public DbSet<RoutingLogEntry> RoutingLog => Set<RoutingLogEntry>();
+    public DbSet<RemoteRoutingLogEntry> RemoteRoutingLog => Set<RemoteRoutingLogEntry>();
     public DbSet<Agent> Agents => Set<Agent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -95,6 +96,8 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
             e.Property(d => d.Port).HasColumnName("port");
             e.Property(d => d.Description).HasColumnName("description");
             e.Property(d => d.Enabled).HasColumnName("enabled");
+            e.Property(d => d.RoutingMode).HasColumnName("routing_mode");
+            e.Property(d => d.RemoteAgentAe).HasColumnName("remote_agent_ae");
             e.Property(d => d.CreatedAt).HasColumnName("created_at");
             e.Property(d => d.UpdatedAt).HasColumnName("updated_at");
         });
@@ -111,6 +114,8 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
             e.Property(r => r.MatchAeTitle).HasColumnName("match_ae_title");
             e.Property(r => r.MatchReceivingAe).HasColumnName("match_receiving_ae");
             e.Property(r => r.MatchBodyPart).HasColumnName("match_body_part");
+            e.Property(r => r.MatchDescriptionPattern).HasColumnName("match_description_pattern");
+            e.Property(r => r.MatchReferringPattern).HasColumnName("match_referring_pattern");
             e.Property(r => r.OnReceive).HasColumnName("on_receive");
             e.Property(r => r.Description).HasColumnName("description");
             e.Property(r => r.CreatedAt).HasColumnName("created_at");
@@ -144,6 +149,26 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
             e.HasOne(rl => rl.Instance).WithMany().HasForeignKey(rl => rl.InstanceId);
             e.HasOne(rl => rl.Rule).WithMany().HasForeignKey(rl => rl.RuleId);
             e.HasOne(rl => rl.Destination).WithMany().HasForeignKey(rl => rl.DestinationId);
+        });
+
+        // ── remote_routing_log ──
+        modelBuilder.Entity<RemoteRoutingLogEntry>(e =>
+        {
+            e.ToTable("remote_routing_log");
+            e.Property(r => r.Id).HasColumnName("id");
+            e.Property(r => r.StudyUid).HasColumnName("study_uid");
+            e.Property(r => r.RuleId).HasColumnName("rule_id");
+            e.Property(r => r.DestinationId).HasColumnName("destination_id");
+            e.Property(r => r.RemoteAgentAe).HasColumnName("remote_agent_ae");
+            e.Property(r => r.Status).HasColumnName("status");
+            e.Property(r => r.ServiceBusMessageId).HasColumnName("service_bus_message_id");
+            e.Property(r => r.InstanceCount).HasColumnName("instance_count");
+            e.Property(r => r.InstancesDelivered).HasColumnName("instances_delivered");
+            e.Property(r => r.LastError).HasColumnName("last_error");
+            e.Property(r => r.PublishedAt).HasColumnName("published_at");
+            e.Property(r => r.CompletedAt).HasColumnName("completed_at");
+            e.HasOne(r => r.Rule).WithMany().HasForeignKey(r => r.RuleId);
+            e.HasOne(r => r.Destination).WithMany().HasForeignKey(r => r.DestinationId);
         });
 
         // ── agents ──

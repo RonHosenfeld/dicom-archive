@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using DicomArchive.Server.Data;
 using FellowOakDicom;
 using FellowOakDicom.Network;
@@ -16,6 +17,7 @@ namespace DicomArchive.Server.Services;
 public class RouterService(
     IDbContextFactory<ArchiveDbContext> dbFactory,
     StorageService storage,
+    ServiceBusPublisherService serviceBus,
     ILogger<RouterService> logger)
 {
     private static readonly ActivitySource ActivitySource = new("DicomArchive.Router");
@@ -24,7 +26,8 @@ public class RouterService(
 
     public async Task<int> EvaluateAndQueueAsync(
         int instanceId, string modality, string sendingAe,
-        string receivingAe, string bodyPart)
+        string receivingAe, string bodyPart,
+        string studyUid = "", string studyDescription = "", string referringPhysician = "")
     {
         using var activity = ActivitySource.StartActivity("EvaluateRules");
         activity?.SetTag("instance.id",    instanceId);
@@ -34,18 +37,40 @@ public class RouterService(
 
         await using var db = await dbFactory.CreateDbContextAsync();
 
-        var matchingDestinations = await db.RoutingRules
+        // Phase 1: SQL-level exact-match filtering
+        var candidateRules = await db.RoutingRules
             .Where(r => r.Enabled && r.OnReceive)
             .Where(r => r.MatchModality    == null || r.MatchModality    == modality)
             .Where(r => r.MatchAeTitle     == null || r.MatchAeTitle     == sendingAe)
             .Where(r => r.MatchReceivingAe == null || r.MatchReceivingAe == receivingAe)
             .Where(r => r.MatchBodyPart    == null || r.MatchBodyPart    == bodyPart)
             .OrderBy(r => r.Priority)
+            .Include(r => r.RuleDestinations)
+                .ThenInclude(rd => rd.Destination)
+            .ToListAsync();
+
+        // Phase 3: Apply regex patterns in C# (cannot be evaluated in SQL)
+        var matchedRules = candidateRules.Where(r =>
+        {
+            if (!string.IsNullOrEmpty(r.MatchDescriptionPattern) &&
+                !Regex.IsMatch(studyDescription, r.MatchDescriptionPattern, RegexOptions.IgnoreCase))
+                return false;
+            if (!string.IsNullOrEmpty(r.MatchReferringPattern) &&
+                !Regex.IsMatch(referringPhysician, r.MatchReferringPattern, RegexOptions.IgnoreCase))
+                return false;
+            return true;
+        }).ToList();
+
+        var matchingDestinations = matchedRules
             .SelectMany(r => r.RuleDestinations
                 .Where(rd => rd.Destination.Enabled)
-                .Select(rd => new { RuleId = r.Id, RuleName = r.Name,
-                                    rd.DestinationId }))
-            .ToListAsync();
+                .Select(rd => new {
+                    RuleId = r.Id,
+                    RuleName = r.Name,
+                    rd.DestinationId,
+                    rd.Destination,
+                }))
+            .ToList();
 
         if (matchingDestinations.Count == 0)
         {
@@ -53,24 +78,84 @@ public class RouterService(
             return 0;
         }
 
+        int queued = 0;
         foreach (var match in matchingDestinations)
         {
-            db.RoutingLog.Add(new RoutingLogEntry
+            if (match.Destination.RoutingMode == "remote")
             {
-                InstanceId    = instanceId,
-                RuleId        = match.RuleId,
-                DestinationId = match.DestinationId,
-                Status        = "queued",
-                QueuedAt      = DateTime.UtcNow,
-            });
-            logger.LogInformation(
-                "Queued route: instance={Id} → dest={DestId} (rule: {Rule})",
-                instanceId, match.DestinationId, match.RuleName);
+                // Remote routing: deduplicate at study level
+                if (string.IsNullOrEmpty(studyUid)) continue;
+
+                var alreadyPublished = await db.RemoteRoutingLog
+                    .AnyAsync(r => r.StudyUid == studyUid
+                                && r.DestinationId == match.DestinationId
+                                && r.Status != "failed");
+                if (alreadyPublished)
+                {
+                    logger.LogDebug("Remote route already published: study={StudyUid} dest={DestId}",
+                        studyUid, match.DestinationId);
+                    continue;
+                }
+
+                // Count instances in this study
+                var instanceCount = await db.Instances
+                    .CountAsync(i => i.Series.Exam.StudyUid == studyUid);
+
+                var entry = new RemoteRoutingLogEntry
+                {
+                    StudyUid       = studyUid,
+                    RuleId         = match.RuleId,
+                    DestinationId  = match.DestinationId,
+                    RemoteAgentAe  = match.Destination.RemoteAgentAe,
+                    Status         = "publishing",
+                    InstanceCount  = instanceCount,
+                    PublishedAt    = DateTime.UtcNow,
+                };
+                db.RemoteRoutingLog.Add(entry);
+                await db.SaveChangesAsync();
+
+                // Publish to Service Bus
+                var messageId = await serviceBus.PublishStudyRouteAsync(
+                    studyUid,
+                    match.Destination.RemoteAgentAe ?? match.Destination.AeTitle,
+                    match.Destination.AeTitle,
+                    match.Destination.Host,
+                    match.Destination.Port,
+                    match.RuleId,
+                    match.DestinationId,
+                    entry.Id,
+                    instanceCount);
+
+                entry.ServiceBusMessageId = messageId;
+                entry.Status = messageId is not null ? "published" : "failed";
+                if (messageId is null) entry.LastError = "Service Bus not configured";
+                await db.SaveChangesAsync();
+
+                logger.LogInformation(
+                    "Remote route: study={StudyUid} → agent={Agent} dest={DestId} (rule: {Rule})",
+                    studyUid, match.Destination.RemoteAgentAe, match.DestinationId, match.RuleName);
+            }
+            else
+            {
+                // Direct routing: queue for C-STORE SCU (existing behavior)
+                db.RoutingLog.Add(new RoutingLogEntry
+                {
+                    InstanceId    = instanceId,
+                    RuleId        = match.RuleId,
+                    DestinationId = match.DestinationId,
+                    Status        = "queued",
+                    QueuedAt      = DateTime.UtcNow,
+                });
+                logger.LogInformation(
+                    "Queued route: instance={Id} → dest={DestId} (rule: {Rule})",
+                    instanceId, match.DestinationId, match.RuleName);
+            }
+            queued++;
         }
 
         await db.SaveChangesAsync();
-        activity?.SetTag("routes.queued", matchingDestinations.Count);
-        return matchingDestinations.Count;
+        activity?.SetTag("routes.queued", queued);
+        return queued;
     }
 
     // ── Queue processing ──────────────────────────────────────────────────────

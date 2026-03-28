@@ -3,3 +3,4 @@ pydicom>=2.4.4
 aiohttp>=3.9.0
 python-dotenv>=1.0.0
 seqlog>=0.3.28
+azure-servicebus>=7.12.0

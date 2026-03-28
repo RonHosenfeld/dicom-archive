@@ -27,6 +27,7 @@ public static class RuleEndpoints
         {
             r.Id, r.Name, r.Priority, r.Enabled,
             r.MatchModality, r.MatchAeTitle, r.MatchReceivingAe, r.MatchBodyPart,
+            r.MatchDescriptionPattern, r.MatchReferringPattern,
             r.OnReceive, r.Description, r.CreatedAt, r.UpdatedAt,
             Destinations = r.RuleDestinations.Select(rd => new {
                 rd.Destination.Id, rd.Destination.Name, rd.Destination.AeTitle,
@@ -46,6 +47,7 @@ public static class RuleEndpoints
         return Results.Ok(new {
             rule.Id, rule.Name, rule.Priority, rule.Enabled,
             rule.MatchModality, rule.MatchAeTitle, rule.MatchReceivingAe, rule.MatchBodyPart,
+            rule.MatchDescriptionPattern, rule.MatchReferringPattern,
             rule.OnReceive, rule.Description,
             DestinationIds = rule.RuleDestinations.Select(rd => rd.DestinationId).ToList()
         });
@@ -58,17 +60,19 @@ public static class RuleEndpoints
 
         var rule = new RoutingRule
         {
-            Name             = body.Name,
-            Priority         = body.Priority,
-            Enabled          = body.Enabled,
-            MatchModality    = Normalise(body.MatchModality),
-            MatchAeTitle     = Normalise(body.MatchAeTitle),
-            MatchReceivingAe = Normalise(body.MatchReceivingAe),
-            MatchBodyPart    = Normalise(body.MatchBodyPart),
-            OnReceive        = body.OnReceive,
-            Description      = body.Description,
-            CreatedAt        = DateTime.UtcNow,
-            UpdatedAt        = DateTime.UtcNow,
+            Name                    = body.Name,
+            Priority                = body.Priority,
+            Enabled                 = body.Enabled,
+            MatchModality           = Normalise(body.MatchModality),
+            MatchAeTitle            = Normalise(body.MatchAeTitle),
+            MatchReceivingAe        = Normalise(body.MatchReceivingAe),
+            MatchBodyPart           = Normalise(body.MatchBodyPart),
+            MatchDescriptionPattern = string.IsNullOrWhiteSpace(body.MatchDescriptionPattern) ? null : body.MatchDescriptionPattern.Trim(),
+            MatchReferringPattern   = string.IsNullOrWhiteSpace(body.MatchReferringPattern) ? null : body.MatchReferringPattern.Trim(),
+            OnReceive               = body.OnReceive,
+            Description             = body.Description,
+            CreatedAt               = DateTime.UtcNow,
+            UpdatedAt               = DateTime.UtcNow,
         };
         db.RoutingRules.Add(rule);
         await db.SaveChangesAsync();
@@ -89,16 +93,18 @@ public static class RuleEndpoints
         if (body.DestinationIds.Count == 0)
             return Results.BadRequest("At least one destination is required");
 
-        rule.Name             = body.Name;
-        rule.Priority         = body.Priority;
-        rule.Enabled          = body.Enabled;
-        rule.MatchModality    = Normalise(body.MatchModality);
-        rule.MatchAeTitle     = Normalise(body.MatchAeTitle);
-        rule.MatchReceivingAe = Normalise(body.MatchReceivingAe);
-        rule.MatchBodyPart    = Normalise(body.MatchBodyPart);
-        rule.OnReceive        = body.OnReceive;
-        rule.Description      = body.Description;
-        rule.UpdatedAt        = DateTime.UtcNow;
+        rule.Name                    = body.Name;
+        rule.Priority                = body.Priority;
+        rule.Enabled                 = body.Enabled;
+        rule.MatchModality           = Normalise(body.MatchModality);
+        rule.MatchAeTitle            = Normalise(body.MatchAeTitle);
+        rule.MatchReceivingAe        = Normalise(body.MatchReceivingAe);
+        rule.MatchBodyPart           = Normalise(body.MatchBodyPart);
+        rule.MatchDescriptionPattern = string.IsNullOrWhiteSpace(body.MatchDescriptionPattern) ? null : body.MatchDescriptionPattern.Trim();
+        rule.MatchReferringPattern   = string.IsNullOrWhiteSpace(body.MatchReferringPattern) ? null : body.MatchReferringPattern.Trim();
+        rule.OnReceive               = body.OnReceive;
+        rule.Description             = body.Description;
+        rule.UpdatedAt               = DateTime.UtcNow;
 
         // Replace destinations
         db.RuleDestinations.RemoveRange(rule.RuleDestinations);
