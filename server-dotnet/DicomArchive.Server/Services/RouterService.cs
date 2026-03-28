@@ -21,6 +21,10 @@ public class RouterService(
     ILogger<RouterService> logger)
 {
     private static readonly ActivitySource ActivitySource = new("DicomArchive.Router");
+    private static readonly SemaphoreSlim ProcessLock = new(1, 1);
+
+    private const int BatchSize = 100;
+    private const int MaxParallelDestinations = 4;
 
     // ── Rule evaluation ───────────────────────────────────────────────────────
 
@@ -160,7 +164,25 @@ public class RouterService(
 
     // ── Queue processing ──────────────────────────────────────────────────────
 
-    public async Task ProcessQueueAsync()
+    /// <summary>
+    /// Processes pending routing queue entries. Returns the number of entries processed.
+    /// Uses a semaphore to ensure only one instance runs at a time — additional callers
+    /// skip since the running instance will pick up their work.
+    /// </summary>
+    public async Task<int> ProcessQueueAsync()
+    {
+        if (!await ProcessLock.WaitAsync(0)) return 0; // skip if already running
+        try
+        {
+            return await ProcessQueueCoreAsync();
+        }
+        finally
+        {
+            ProcessLock.Release();
+        }
+    }
+
+    private async Task<int> ProcessQueueCoreAsync()
     {
         await using var db = await dbFactory.CreateDbContextAsync();
 
@@ -172,16 +194,114 @@ public class RouterService(
                       && rl.Destination != null
                       && rl.Destination.Enabled)
             .OrderBy(rl => rl.QueuedAt)
+            .Take(BatchSize)
             .ToListAsync();
 
-        if (pending.Count == 0) return;
+        if (pending.Count == 0) return 0;
 
         logger.LogInformation("Processing {Count} pending route(s)", pending.Count);
 
+        // Detach all entities so each batch can use its own DbContext
         foreach (var entry in pending)
+            db.Entry(entry).State = EntityState.Detached;
+
+        // Group by destination so we can reuse DICOM associations
+        var groups = pending
+            .Where(e => e.Instance != null && e.Destination != null)
+            .GroupBy(e => e.DestinationId);
+
+        await Parallel.ForEachAsync(groups,
+            new ParallelOptions { MaxDegreeOfParallelism = MaxParallelDestinations },
+            async (group, ct) =>
+            {
+                await SendBatchAsync(group.ToList());
+            });
+
+        return pending.Count;
+    }
+
+    /// <summary>
+    /// Sends all entries in a batch to a single destination using one DICOM association.
+    /// Each entry gets its own DB status update so partial failures are tracked.
+    /// </summary>
+    private async Task SendBatchAsync(List<RoutingLogEntry> entries)
+    {
+        if (entries.Count == 0) return;
+
+        var dest = entries[0].Destination!;
+        using var activity = ActivitySource.StartActivity("SendBatch");
+        activity?.SetTag("dest.ae_title", dest.AeTitle);
+        activity?.SetTag("dest.host", dest.Host);
+        activity?.SetTag("dest.port", dest.Port);
+        activity?.SetTag("batch.count", entries.Count);
+
+        logger.LogInformation(
+            "Sending batch of {Count} instance(s) → {DestName} [{AeTitle}@{Host}:{Port}]",
+            entries.Count, dest.Name, dest.AeTitle, dest.Host, dest.Port);
+
+        // Each entry needs its own DbContext for independent status updates
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        // Prepare all files and DICOM objects
+        var prepared = new List<(RoutingLogEntry Entry, DicomFile File, string TempPath)>();
+        try
         {
-            if (entry.Instance == null || entry.Destination == null) continue;
-            await SendInstanceAsync(db, entry);
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    entry.Status = "sending";
+                    db.RoutingLog.Attach(entry);
+                    db.Entry(entry).Property(e => e.Status).IsModified = true;
+                    await db.SaveChangesAsync();
+
+                    var localPath = await storage.FetchToTempAsync(entry.Instance!.BlobKey);
+                    var dicomFile = await DicomFile.OpenAsync(localPath);
+                    prepared.Add((entry, dicomFile, localPath));
+                }
+                catch (Exception ex)
+                {
+                    entry.Attempts++;
+                    entry.Status = "failed";
+                    entry.LastError = ex.Message;
+                    await db.SaveChangesAsync();
+                    logger.LogError(ex, "  ✗ Failed to prepare {InstanceUid}", entry.Instance!.InstanceUid);
+                }
+            }
+
+            if (prepared.Count == 0) return;
+
+            // Send all prepared files on a single DICOM association
+            var results = await CStoreBatchAsync(
+                prepared.Select(p => p.File).ToList(),
+                dest.AeTitle, dest.Host, dest.Port);
+
+            // Update status for each entry
+            for (int i = 0; i < prepared.Count; i++)
+            {
+                var (entry, _, _) = prepared[i];
+                var (ok, error) = results[i];
+
+                entry.Attempts++;
+                entry.Status = ok ? "success" : "failed";
+                entry.LastError = error;
+                entry.SentAt = ok ? DateTime.UtcNow : null;
+                await db.SaveChangesAsync();
+
+                if (ok)
+                    logger.LogInformation("  ✓ Sent {InstanceUid} → {DestName}",
+                        entry.Instance!.InstanceUid, dest.Name);
+                else
+                    logger.LogError("  ✗ Failed {InstanceUid} → {DestName}: {Error}",
+                        entry.Instance!.InstanceUid, dest.Name, error);
+            }
+        }
+        finally
+        {
+            foreach (var (_, _, tempPath) in prepared)
+            {
+                try { File.Delete(tempPath); } catch { /* best effort */ }
+            }
         }
     }
 
@@ -297,22 +417,37 @@ public class RouterService(
     private async Task<(bool Ok, string? Error)> CStoreAsync(
         DicomFile file, string aeTitle, string host, int port)
     {
-        string? lastError = null;
-        bool success = false;
+        var results = await CStoreBatchAsync([file], aeTitle, host, port);
+        return results[0];
+    }
+
+    /// <summary>
+    /// Sends multiple DICOM files on a single association to reduce TCP overhead.
+    /// Returns one result per file in the same order as the input list.
+    /// </summary>
+    private async Task<List<(bool Ok, string? Error)>> CStoreBatchAsync(
+        List<DicomFile> files, string aeTitle, string host, int port)
+    {
+        var results = new (bool Ok, string? Error)[files.Count];
+        // Default all to failure in case association fails before any response
+        for (int i = 0; i < results.Length; i++)
+            results[i] = (false, "No response");
 
         var client = DicomClientFactory.Create(host, port, false, "ARCHIVE_SCU", aeTitle);
         client.NegotiateAsyncOps();
 
-        var request = new DicomCStoreRequest(file);
-        request.OnResponseReceived = (req, response) =>
+        for (int i = 0; i < files.Count; i++)
         {
-            if (response.Status == DicomStatus.Success)
-                success = true;
-            else
-                lastError = $"C-STORE status: {response.Status}";
-        };
-
-        await client.AddRequestAsync(request);
+            var index = i; // capture for closure
+            var request = new DicomCStoreRequest(files[i]);
+            request.OnResponseReceived = (req, response) =>
+            {
+                results[index] = response.Status == DicomStatus.Success
+                    ? (true, null)
+                    : (false, $"C-STORE status: {response.Status}");
+            };
+            await client.AddRequestAsync(request);
+        }
 
         try
         {
@@ -320,10 +455,15 @@ public class RouterService(
         }
         catch (Exception ex)
         {
-            return (false, $"Association failed: {ex.Message}");
+            // Mark any entries that didn't get a response as association failure
+            for (int i = 0; i < results.Length; i++)
+            {
+                if (!results[i].Ok && results[i].Error == "No response")
+                    results[i] = (false, $"Association failed: {ex.Message}");
+            }
         }
 
-        return success ? (true, null) : (false, lastError ?? "No response");
+        return results.ToList();
     }
 
     // ── C-ECHO (connectivity test) ────────────────────────────────────────────

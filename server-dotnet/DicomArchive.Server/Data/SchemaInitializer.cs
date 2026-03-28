@@ -201,6 +201,11 @@ public static class SchemaInitializer
             ON exams USING gin (accession gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS idx_exams_description_trgm
             ON exams USING gin (description gin_trgm_ops);
+
+        -- Partial index for routing queue processor queries
+        CREATE INDEX IF NOT EXISTS idx_routing_log_queue
+            ON routing_log(status, attempts, queued_at)
+            WHERE status IN ('queued', 'failed') AND attempts < 3;
         """;
 
     public static async Task RunAsync(IServiceProvider services, ILogger logger)
