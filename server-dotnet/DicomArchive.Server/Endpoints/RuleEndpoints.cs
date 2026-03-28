@@ -81,7 +81,13 @@ public static class RuleEndpoints
             db.RuleDestinations.Add(new RuleDestination { RuleId = rule.Id, DestinationId = destId });
         await db.SaveChangesAsync();
 
-        return Results.Created($"/api/rules/{rule.Id}", rule);
+        return Results.Created($"/api/rules/{rule.Id}", new {
+            rule.Id, rule.Name, rule.Priority, rule.Enabled,
+            rule.MatchModality, rule.MatchAeTitle, rule.MatchReceivingAe, rule.MatchBodyPart,
+            rule.MatchDescriptionPattern, rule.MatchReferringPattern,
+            rule.OnReceive, rule.Description,
+            DestinationIds = body.DestinationIds
+        });
     }
 
     static async Task<IResult> Update(ArchiveDbContext db, int id, RuleIn body)
@@ -112,7 +118,13 @@ public static class RuleEndpoints
             db.RuleDestinations.Add(new RuleDestination { RuleId = rule.Id, DestinationId = destId });
 
         await db.SaveChangesAsync();
-        return Results.Ok(rule);
+        return Results.Ok(new {
+            rule.Id, rule.Name, rule.Priority, rule.Enabled,
+            rule.MatchModality, rule.MatchAeTitle, rule.MatchReceivingAe, rule.MatchBodyPart,
+            rule.MatchDescriptionPattern, rule.MatchReferringPattern,
+            rule.OnReceive, rule.Description,
+            DestinationIds = body.DestinationIds
+        });
     }
 
     static async Task<IResult> Delete(ArchiveDbContext db, int id)
