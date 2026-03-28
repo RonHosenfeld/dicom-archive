@@ -63,6 +63,7 @@ public static class SchemaInitializer
             received_at     TIMESTAMPTZ DEFAULT NOW(),
             sending_ae      TEXT,
             receiving_ae    TEXT,
+            status          TEXT NOT NULL DEFAULT 'stored',
             UNIQUE (instance_uid)
         );
 
@@ -125,6 +126,29 @@ public static class SchemaInitializer
             instances_received BIGINT NOT NULL DEFAULT 0,
             UNIQUE (ae_title)
         );
+
+        -- Non-destructive migration: add status column to instances if upgrading
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='instances' AND column_name='status'
+          ) THEN
+            ALTER TABLE instances ADD COLUMN status TEXT NOT NULL DEFAULT 'stored';
+          END IF;
+        END $$;
+
+        -- Trigram extension + indexes for fast ILIKE searches
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+        CREATE INDEX IF NOT EXISTS idx_patients_name_trgm
+            ON patients USING gin (name gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_patients_pid_trgm
+            ON patients USING gin (patient_id gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_exams_accession_trgm
+            ON exams USING gin (accession gin_trgm_ops);
+        CREATE INDEX IF NOT EXISTS idx_exams_description_trgm
+            ON exams USING gin (description gin_trgm_ops);
         """;
 
     public static async Task RunAsync(IServiceProvider services, ILogger logger)
