@@ -269,6 +269,7 @@ public static class IngestEndpoints
         }
 
         agent.Host           = body.Host;
+        agent.ListenPort     = body.ListenPort     ?? agent.ListenPort;
         agent.StorageBackend = body.StorageBackend ?? agent.StorageBackend;
         agent.Version        = body.Version        ?? agent.Version;
         agent.LastSeen       = DateTime.UtcNow;

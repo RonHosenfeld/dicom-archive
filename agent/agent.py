@@ -129,6 +129,7 @@ def register_with_server():
     result = _server_post("/ingest/register", {
         "ae_title":                AE_TITLE,
         "host":                    _get_host(),
+        "listen_port":             LISTEN_PORT,
         "storage_backend":         "edge",
         "version":                 AGENT_VERSION,
         "remote_routing_enabled":  REMOTE_ROUTING_ENABLED,

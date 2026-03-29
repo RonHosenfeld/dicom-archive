@@ -193,7 +193,7 @@
       <div id="agentWarnings"></div>
       <div class="table-wrap no-hover" id="agentsTableWrap">
         <table>
-          <thead><tr><th>Status</th><th>AE Title</th><th>Host</th><th>Storage</th><th>Images Received</th><th>First Seen</th><th>Last Seen</th><th>Rules</th><th></th></tr></thead>
+          <thead><tr><th>Status</th><th>AE Title</th><th>Host</th><th>Port</th><th>Storage</th><th>Images Received</th><th>First Seen</th><th>Last Seen</th><th>Rules</th><th></th></tr></thead>
           <tbody id="agentsTable"></tbody>
         </table>
       </div>
@@ -238,11 +238,30 @@
     <div id="page-routelog" class="hidden">
       <div class="page-header">
         <div class="page-title">Route Log</div>
-        <button class="btn btn-secondary" onclick="loadRouteLog()">↻ Refresh</button>
+        <div class="flex gap-2">
+          <button class="btn btn-red hidden" id="resendAllBtn" onclick="resendAllFailed()">↻ Resend All Failed</button>
+          <button class="btn btn-secondary" onclick="loadRouteLog()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="search-bar mb-4">
+        <input type="text" id="rlSearch" placeholder="Instance UID, destination, rule, error…" style="max-width:280px">
+        <select id="rlStatus" style="max-width:140px">
+          <option value="">All statuses</option>
+          <option value="queued">Queued</option>
+          <option value="sending">Sending</option>
+          <option value="success">Success</option>
+          <option value="failed">Failed</option>
+        </select>
+        <select id="rlDest" style="max-width:160px">
+          <option value="">All destinations</option>
+        </select>
+        <input type="date" id="rlFrom" style="max-width:150px">
+        <input type="date" id="rlTo"   style="max-width:150px">
+        <button class="btn btn-primary" id="rlFilterBtn" onclick="applyRouteLogFilters()">Search</button>
       </div>
       <div class="table-wrap no-hover">
         <table>
-          <thead><tr><th>Time</th><th>Instance</th><th>Destination</th><th>Rule</th><th>Status</th><th>Attempts</th><th>Error</th></tr></thead>
+          <thead><tr><th>Time</th><th>Accession</th><th>Instance</th><th>Destination</th><th>Rule</th><th>Status</th><th>Attempts</th><th>Error</th><th></th></tr></thead>
           <tbody id="routeLogTable"></tbody>
         </table>
       </div>
@@ -801,6 +820,7 @@ async function loadAgents() {
         ${a.description ? `<div class="text-muted" style="font-size:11px">${esc(a.description)}</div>` : ''}
       </td>
       <td class="font-mono text-muted">${a.host || '—'}</td>
+      <td class="font-mono text-muted">${a.listen_port ?? '—'}</td>
       <td>${a.storage_backend ? `<span class="badge badge-muted">${a.storage_backend}</span>` : '—'}</td>
       <td class="font-mono">${(a.instances_received||0).toLocaleString()}</td>
       <td class="text-muted" style="font-size:12px">${fmtTime(a.first_seen)}</td>
@@ -1205,25 +1225,82 @@ async function confirmRouteStudy() {
 }
 
 // ── Route Log ─────────────────────────────────────────────────────────────────
-async function loadRouteLog() {
-  const log = await api('GET', '/routing-log?limit=100');
+async function loadRouteLog(filters = {}) {
+  // Populate destination dropdown from state
+  const destSel = document.getElementById('rlDest');
+  if (destSel && destSel.options.length <= 1) {
+    state.destinations.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.name; opt.textContent = d.name;
+      destSel.appendChild(opt);
+    });
+  }
+
+  const params = new URLSearchParams(filters).toString();
+  const log = await api('GET', `/routing-log${params ? '?'+params : '?limit=100'}`);
   const tbody = document.getElementById('routeLogTable');
   const empty = document.getElementById('routeLogEmpty');
   const wrap  = document.querySelector('#page-routelog .table-wrap');
 
-  if (!log.length) { wrap.classList.add('hidden'); empty.classList.remove('hidden'); return; }
-  empty.classList.add('hidden'); wrap.classList.remove('hidden');
+  if (!log.length) { wrap.classList.add('hidden'); empty.classList.remove('hidden'); }
+  else { empty.classList.add('hidden'); wrap.classList.remove('hidden'); }
+
+  // Show/hide resend all failed button
+  const hasF = log.some(r => r.status === 'failed');
+  const raBtn = document.getElementById('resendAllBtn');
+  if (raBtn) raBtn.classList.toggle('hidden', !hasF);
+
+  const hasFilter = Object.values(filters).some(v => v);
+  const btn = document.getElementById('rlFilterBtn');
+  if (btn) btn.textContent = hasFilter ? 'Clear' : 'Search';
 
   tbody.innerHTML = log.map(r => `
     <tr>
       <td class="font-mono">${fmtTime(r.queued_at)}</td>
+      <td class="font-mono">${esc(r.accession||'—')}</td>
       <td class="font-mono truncate" title="${r.instance_uid}" style="max-width:160px">${r.instance_uid||'—'}</td>
       <td>${esc(r.destination_name||'—')}</td>
       <td>${esc(r.rule_name||'Manual')}</td>
       <td>${statusBadge(r.status)}</td>
       <td style="text-align:center">${r.attempts}</td>
-      <td class="text-muted" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${r.last_error||''}">${r.last_error||'—'}</td>
+      <td class="text-muted" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.last_error||'')}">${esc(r.last_error||'—')}</td>
+      <td>${r.status === 'failed' ? `<button class="btn btn-sm btn-amber" onclick="resendRoute(${r.id})">↻</button>` : ''}</td>
     </tr>`).join('');
+}
+
+function applyRouteLogFilters() {
+  const btn = document.getElementById('rlFilterBtn');
+  if (btn && btn.textContent === 'Clear') {
+    document.getElementById('rlSearch').value = '';
+    document.getElementById('rlStatus').value = '';
+    document.getElementById('rlDest').value = '';
+    document.getElementById('rlFrom').value = '';
+    document.getElementById('rlTo').value = '';
+    loadRouteLog({});
+    return;
+  }
+  const filters = {
+    search:      document.getElementById('rlSearch')?.value || '',
+    status:      document.getElementById('rlStatus')?.value || '',
+    destination: document.getElementById('rlDest')?.value || '',
+    date_from:   document.getElementById('rlFrom')?.value || '',
+    date_to:     document.getElementById('rlTo')?.value || '',
+  };
+  const hasFilter = Object.values(filters).some(v => v);
+  loadRouteLog(hasFilter ? filters : {});
+}
+
+async function resendRoute(id) {
+  await api('POST', `/routing-log/${id}/resend`);
+  toast('Entry re-queued for delivery');
+  loadRouteLog();
+}
+
+async function resendAllFailed() {
+  if (!confirm('Resend all failed routing entries?')) return;
+  const res = await api('POST', '/routing-log/resend-failed');
+  toast(`${res.count} entries re-queued for delivery`);
+  loadRouteLog();
 }
 
 // ── Modals ────────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 using DicomArchive.Server.Data;
+using DicomArchive.Server.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace DicomArchive.Server.Endpoints;
@@ -13,6 +14,8 @@ public static class RuleEndpoints
         app.MapPut   ("/api/rules/{id:int}", Update);
         app.MapDelete("/api/rules/{id:int}", Delete);
         app.MapGet   ("/api/routing-log",    RoutingLog);
+        app.MapPost  ("/api/routing-log/{id:int}/resend", ResendRoute);
+        app.MapPost  ("/api/routing-log/resend-failed",   ResendAllFailed);
     }
 
     static async Task<IResult> List(ArchiveDbContext db)
@@ -136,23 +139,78 @@ public static class RuleEndpoints
         return Results.NoContent();
     }
 
-    static async Task<IResult> RoutingLog(ArchiveDbContext db, int limit = 50)
+    static async Task<IResult> RoutingLog(ArchiveDbContext db,
+        string? search = null, string? status = null, string? destination = null,
+        string? date_from = null, string? date_to = null,
+        int limit = 100, int offset = 0)
     {
-        var log = await db.RoutingLog
-            .Include(rl => rl.Instance)
+        var q = db.RoutingLog
+            .Include(rl => rl.Instance).ThenInclude(i => i!.Series).ThenInclude(s => s.Exam)
             .Include(rl => rl.Destination)
             .Include(rl => rl.Rule)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(status))
+            q = q.Where(rl => rl.Status == status);
+        if (!string.IsNullOrEmpty(destination))
+            q = q.Where(rl => rl.Destination != null && rl.Destination.Name == destination);
+        if (DateTime.TryParse(date_from, out var df))
+            q = q.Where(rl => rl.QueuedAt >= df);
+        if (DateTime.TryParse(date_to, out var dt))
+            q = q.Where(rl => rl.QueuedAt <= dt.AddDays(1));
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search}%";
+            q = q.Where(rl =>
+                (rl.Instance != null && EF.Functions.ILike(rl.Instance.InstanceUid, pattern)) ||
+                (rl.Destination != null && EF.Functions.ILike(rl.Destination.Name, pattern)) ||
+                (rl.Rule != null && EF.Functions.ILike(rl.Rule.Name, pattern)) ||
+                (rl.LastError != null && EF.Functions.ILike(rl.LastError, pattern))
+            );
+        }
+
+        var log = await q
             .OrderByDescending(rl => rl.QueuedAt)
-            .Take(Math.Min(limit, 200))
+            .Skip(offset).Take(Math.Min(limit, 500))
             .Select(rl => new {
                 rl.Id, rl.Status, rl.Attempts, rl.LastError,
                 rl.QueuedAt, rl.SentAt,
                 InstanceUid     = rl.Instance != null ? rl.Instance.InstanceUid : null,
-                DestinationName = rl.Destination != null ? rl.Destination.Name  : null,
-                RuleName        = rl.Rule        != null ? rl.Rule.Name          : "Manual",
+                StudyUid        = rl.Instance != null && rl.Instance.Series != null && rl.Instance.Series.Exam != null
+                                  ? rl.Instance.Series.Exam.StudyUid : null,
+                Accession       = rl.Instance != null && rl.Instance.Series != null && rl.Instance.Series.Exam != null
+                                  ? rl.Instance.Series.Exam.Accession : null,
+                DestinationName = rl.Destination != null ? rl.Destination.Name : null,
+                DestinationId   = rl.DestinationId,
+                RuleName        = rl.Rule != null ? rl.Rule.Name : "Manual",
             })
             .ToListAsync();
         return Results.Ok(log);
+    }
+
+    static async Task<IResult> ResendRoute(ArchiveDbContext db, RouterService router, int id)
+    {
+        var entry = await db.RoutingLog.FindAsync(id);
+        if (entry is null) return Results.NotFound();
+        entry.Status = "queued";
+        entry.Attempts = 0;
+        entry.LastError = null;
+        await db.SaveChangesAsync();
+        _ = Task.Run(() => router.ProcessQueueAsync());
+        return Results.Ok(new { ok = true });
+    }
+
+    static async Task<IResult> ResendAllFailed(ArchiveDbContext db, RouterService router)
+    {
+        var count = await db.RoutingLog
+            .Where(rl => rl.Status == "failed")
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(rl => rl.Status, "queued")
+                .SetProperty(rl => rl.Attempts, 0)
+                .SetProperty(rl => rl.LastError, (string?)null));
+        if (count > 0)
+            _ = Task.Run(() => router.ProcessQueueAsync());
+        return Results.Ok(new { ok = true, count });
     }
 
     private static string? Normalise(string? s) =>

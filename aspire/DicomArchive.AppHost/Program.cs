@@ -68,7 +68,7 @@ for (int i = 1; i <= 3; i++)
         .WaitFor(storage)
         .WaitFor(serviceBus)
         .WithEnvironment("AE_TITLE",                     aeTitle)
-        .WithEnvironment("LISTEN_PORT",                   "11112")
+        .WithEnvironment("LISTEN_PORT",                   hostPort.ToString())
         .WithEnvironment("SERVER_URL",                    server.GetEndpoint("web"))
         .WithEnvironment("AGENT_API_KEY",                 agentApiKey)
         .WithEnvironment("UPLOAD_WORKERS",                "2")
@@ -79,7 +79,7 @@ for (int i = 1; i <= 3; i++)
         .WithEnvironment("SEQ_URL",                       seq.GetEndpoint("http"))
         .WithBindMount($"../../data/remote-{i}-staging",    "/data/staging")
         .WithBindMount($"../../data/remote-{i}-quarantine", "/data/quarantine")
-        .WithEndpoint(port: hostPort, targetPort: 11112, scheme: "tcp", name: "dicom");
+        .WithEndpoint(port: hostPort, targetPort: hostPort, scheme: "tcp", name: "dicom");
 }
 
 // ── Test PACS (lightweight DICOM sinks for verifying remote routing) ────────

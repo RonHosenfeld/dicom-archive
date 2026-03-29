@@ -178,6 +178,17 @@ public static class SchemaInitializer
             completed_at           TIMESTAMPTZ
         );
 
+        -- Non-destructive migration: add listen_port column to agents
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='agents' AND column_name='listen_port'
+          ) THEN
+            ALTER TABLE agents ADD COLUMN listen_port INTEGER;
+          END IF;
+        END $$;
+
         -- Non-destructive migration: add regex pattern columns to routing_rules
         DO $$
         BEGIN

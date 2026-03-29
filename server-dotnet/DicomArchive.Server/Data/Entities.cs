@@ -159,4 +159,5 @@ public class Agent
     public DateTime? FirstSeen { get; set; }
     public DateTime? LastSeen { get; set; }
     public long InstancesReceived { get; set; }
+    public int? ListenPort { get; set; }
 }

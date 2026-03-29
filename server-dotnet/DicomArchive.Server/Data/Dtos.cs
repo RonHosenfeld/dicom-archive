@@ -1,7 +1,7 @@
 namespace DicomArchive.Server.Data;
 
 // IngestEndpoints
-record AgentRegistration(string AeTitle, string Host, string? StorageBackend, string? Version, bool? RemoteRoutingEnabled = false);
+record AgentRegistration(string AeTitle, string Host, int? ListenPort, string? StorageBackend, string? Version, bool? RemoteRoutingEnabled = false);
 record AgentHeartbeat(string AeTitle, long InstancesDelta);
 
 // AgentEndpoints
