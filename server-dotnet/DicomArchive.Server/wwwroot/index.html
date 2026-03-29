@@ -112,6 +112,18 @@
 
     /* Status dot */
     .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+    /* Tail viewer */
+    .tail-container { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 20px; }
+    .tail-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
+    .tail-header-left { display: flex; align-items: center; gap: 10px; }
+    .tail-header-right { display: flex; align-items: center; gap: 8px; }
+    .tail-body { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; padding: 8px 0; }
+    .tail-entry { padding: 3px 18px; border-bottom: 1px solid rgba(37,45,69,0.4); }
+    .tail-entry:hover { background: rgba(79,142,247,0.04); }
+    .tail-entry .ts { color: var(--muted); margin-right: 12px; }
+    .tail-entry .mod { color: var(--accent2); margin-right: 8px; font-weight: 600; }
+    .tail-empty { padding: 24px; text-align: center; color: var(--muted); font-style: italic; }
     .status-dot.green  { background: var(--green); }
     .status-dot.red    { background: var(--red); }
     .status-dot.amber  { background: var(--amber); }
@@ -189,6 +201,7 @@
     <div class="nav-item" data-page="routelog"><span class="icon">📜</span> Route Log</div>
     <div class="nav-section" style="margin-top:8px">System</div>
     <div class="nav-item" data-page="metrics"><span class="icon">📈</span> Metrics</div>
+    <div class="nav-item" data-page="testpacs"><span class="icon">🧪</span> Test PACS</div>
   </aside>
 
   <!-- Main -->
@@ -323,6 +336,18 @@
         <div class="metrics-section-title">Routing Outcomes</div>
         <div id="chartRouting"></div>
       </div>
+    </div>
+
+    <!-- ── Test PACS ── -->
+    <div id="page-testpacs" class="hidden">
+      <div class="page-header">
+        <div class="page-title">Test PACS Live Tail</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="form-check" style="margin:0"><input type="checkbox" id="testpacsAutoRefresh" checked> <span style="font-size:13px">Auto-refresh</span></label>
+          <button class="btn btn-secondary" onclick="loadTestPacs()">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="testpacsContent"></div>
     </div>
 
   </main>
@@ -540,6 +565,7 @@ document.querySelectorAll('.nav-item').forEach(el =>
 );
 
 function showPage(page) {
+  stopTestPacsTails();
   state.page = page;
   document.querySelectorAll('.nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.page === page)
@@ -554,6 +580,7 @@ function showPage(page) {
     rules:        loadRules,
     routelog:     loadRouteLog,
     metrics:      loadMetrics,
+    testpacs:     loadTestPacs,
   };
   loaders[page]?.();
 }
@@ -1685,6 +1712,114 @@ function renderRoutingChart(data, bucket) {
   });
   renderBarChart('chartRouting', rows);
 }
+
+// ── Test PACS ─────────────────────────────────────────────────────────────────
+state.testpacsTimers = {};
+state.testpacsSeqs = {};
+
+async function loadTestPacs() {
+  stopTestPacsTails();
+  const container = document.getElementById('testpacsContent');
+  try {
+    const instances = await api('GET', '/test-pacs');
+    if (!instances.length) {
+      container.innerHTML = '<div class="empty"><div class="icon">🧪</div><p>No test PACS configured</p><p style="font-size:12px;margin-top:8px">Set TEST_PACS_N_URL / TEST_PACS_N_AE environment variables on the server</p></div>';
+      return;
+    }
+    container.innerHTML = instances.map(inst => `
+      <div class="tail-container" id="tp-${inst.name}">
+        <div class="tail-header">
+          <div class="tail-header-left">
+            <span class="status-dot" style="background:${inst.online ? 'var(--green)' : 'var(--red)'}"></span>
+            <strong>${inst.ae_title}</strong>
+            <span class="badge badge-muted">${inst.name}</span>
+            <span class="badge badge-blue">${inst.total_received ?? 0} received</span>
+          </div>
+          <div class="tail-header-right">
+            ${inst.online ? `<button class="btn btn-sm btn-danger" onclick="clearTestPacs('${inst.name}')">Clear</button>` : '<span class="badge badge-red">offline</span>'}
+          </div>
+        </div>
+        <div class="tail-body" id="tp-body-${inst.name}">
+          <div class="tail-empty">Waiting for instances...</div>
+        </div>
+      </div>
+    `).join('');
+
+    // Start polling for online instances
+    for (const inst of instances) {
+      if (inst.online) startTestPacsTail(inst.name);
+    }
+  } catch(e) {
+    container.innerHTML = '<div class="empty"><div class="icon">🧪</div><p>Failed to load test PACS: ' + e.message + '</p></div>';
+  }
+}
+
+function startTestPacsTail(name) {
+  state.testpacsSeqs[name] = state.testpacsSeqs[name] || 0;
+  // Do an immediate fetch
+  fetchTestPacsEntries(name);
+  // Then poll every 2s
+  state.testpacsTimers[name] = setInterval(() => {
+    if (document.hidden) return;
+    const autoRefresh = document.getElementById('testpacsAutoRefresh');
+    if (autoRefresh && !autoRefresh.checked) return;
+    fetchTestPacsEntries(name);
+  }, 2000);
+}
+
+async function fetchTestPacsEntries(name) {
+  try {
+    const seq = state.testpacsSeqs[name] || 0;
+    const entries = await api('GET', `/test-pacs/${name}/received?since_seq=${seq}`);
+    if (!entries.length) return;
+    const body = document.getElementById(`tp-body-${name}`);
+    if (!body) return;
+    // Remove empty placeholder
+    const empty = body.querySelector('.tail-empty');
+    if (empty) empty.remove();
+    // Check if user has scrolled up
+    const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
+    for (const e of entries) {
+      const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+      const div = document.createElement('div');
+      div.className = 'tail-entry';
+      div.innerHTML = `<span class="ts">${ts}</span><span class="mod">${e.modality}</span>${e.patient_name} (${e.patient_id}) &mdash; Study: ...${(e.study_uid || '').slice(-12)}`;
+      body.appendChild(div);
+      state.testpacsSeqs[name] = Math.max(state.testpacsSeqs[name] || 0, e.seq);
+    }
+    // Update count badge
+    const header = document.querySelector(`#tp-${name} .badge-blue`);
+    if (header) header.textContent = `${state.testpacsSeqs[name]} received`;
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch { /* ignore fetch errors during polling */ }
+}
+
+function stopTestPacsTails() {
+  for (const id of Object.values(state.testpacsTimers)) clearInterval(id);
+  state.testpacsTimers = {};
+}
+
+async function clearTestPacs(name) {
+  try {
+    await api('POST', `/test-pacs/${name}/clear`);
+    state.testpacsSeqs[name] = 0;
+    const body = document.getElementById(`tp-body-${name}`);
+    if (body) body.innerHTML = '<div class="tail-empty">Cleared — waiting for instances...</div>';
+    const header = document.querySelector(`#tp-${name} .badge-blue`);
+    if (header) header.textContent = '0 received';
+    toast('Buffer cleared');
+  } catch(e) { toast('Failed to clear: ' + e.message, 'error'); }
+}
+
+// Pause/resume polling on tab visibility
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && state.page === 'testpacs') {
+    // Resume by fetching immediately for all active timers
+    for (const name of Object.keys(state.testpacsTimers)) {
+      fetchTestPacsEntries(name);
+    }
+  }
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {

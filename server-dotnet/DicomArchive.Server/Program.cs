@@ -43,6 +43,7 @@ builder.Services.AddSingleton<AgentSubscriptionService>();
 builder.Services.AddScoped<RouterService>();
 builder.Services.AddScoped<StorageService>();
 builder.Services.AddHostedService<QueueProcessorService>();
+builder.Services.AddHttpClient();
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
@@ -79,5 +80,6 @@ IngestEndpoints.Map(app);
 WadoEndpoints.Map(app);
 DicomHeaderEndpoints.Map(app);
 MetricsEndpoints.Map(app);
+TestPacsEndpoints.Map(app);
 
 app.Run();

@@ -83,16 +83,32 @@ for (int i = 1; i <= 3; i++)
 }
 
 // ── Test PACS (lightweight DICOM sinks for verifying remote routing) ────────
+var testPacsList = new List<(string Name, string AeTitle, IResourceBuilder<ContainerResource> Resource)>();
 for (int i = 1; i <= 3; i++)
 {
     var pacsName = $"test-pacs-{i}";
     var aeTitle = $"TEST_PACS_{i}";
-    var hostPort = 10103 + i; // 10104, 10105, 10106
+    var dicomHostPort = 10103 + i; // 10104, 10105, 10106
+    var httpHostPort = 18080 + i;  // 18081, 18082, 18083
 
-    builder.AddDockerfile(pacsName, "../../tools/test-pacs")
+    var pacs = builder.AddDockerfile(pacsName, "../../tools/test-pacs")
         .WithEnvironment("AE_TITLE",     aeTitle)
         .WithEnvironment("LISTEN_PORT",  "104")
-        .WithEndpoint(port: hostPort, targetPort: 104, scheme: "tcp", name: "dicom");
+        .WithEnvironment("HTTP_PORT",    "8080")
+        .WithEndpoint(port: dicomHostPort, targetPort: 104, scheme: "tcp", name: "dicom")
+        .WithHttpEndpoint(port: httpHostPort, targetPort: 8080, name: "http");
+
+    testPacsList.Add((pacsName, aeTitle, pacs));
+}
+
+// Inject test-pacs URLs into the server so it can proxy browser requests
+for (int i = 0; i < testPacsList.Count; i++)
+{
+    var (name, aeTitle, pacs) = testPacsList[i];
+    var idx = i + 1;
+    server
+        .WithEnvironment($"TEST_PACS_{idx}_URL", pacs.GetEndpoint("http"))
+        .WithEnvironment($"TEST_PACS_{idx}_AE", aeTitle);
 }
 
 builder.Build().Run();
