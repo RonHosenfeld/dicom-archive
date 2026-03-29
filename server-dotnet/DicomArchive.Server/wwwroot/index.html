@@ -1733,6 +1733,7 @@ async function loadTestPacs() {
             <span class="status-dot" style="background:${inst.online ? 'var(--green)' : 'var(--red)'}"></span>
             <strong>${inst.ae_title}</strong>
             <span class="badge badge-muted">${inst.name}</span>
+            ${inst.dicom_port ? `<span class="badge badge-purple">port ${inst.dicom_port}</span>` : ''}
             <span class="badge badge-blue">${inst.total_received ?? 0} received</span>
           </div>
           <div class="tail-header-right">

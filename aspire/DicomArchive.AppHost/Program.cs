@@ -106,9 +106,11 @@ for (int i = 0; i < testPacsList.Count; i++)
 {
     var (name, aeTitle, pacs) = testPacsList[i];
     var idx = i + 1;
+    var dicomPort = 10103 + idx; // matches dicomHostPort above
     server
         .WithEnvironment($"TEST_PACS_{idx}_URL", pacs.GetEndpoint("http"))
-        .WithEnvironment($"TEST_PACS_{idx}_AE", aeTitle);
+        .WithEnvironment($"TEST_PACS_{idx}_AE", aeTitle)
+        .WithEnvironment($"TEST_PACS_{idx}_PORT", dicomPort.ToString());
 }
 
 builder.Build().Run();

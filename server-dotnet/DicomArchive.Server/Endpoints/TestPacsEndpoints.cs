@@ -2,7 +2,7 @@ namespace DicomArchive.Server.Endpoints;
 
 public static class TestPacsEndpoints
 {
-    private record TestPacsInstance(string Name, string AeTitle, string Url);
+    private record TestPacsInstance(string Name, string AeTitle, string Url, int? DicomPort);
     private static List<TestPacsInstance>? _instances;
 
     private static List<TestPacsInstance> GetInstances()
@@ -15,7 +15,9 @@ public static class TestPacsEndpoints
             var url = Environment.GetEnvironmentVariable($"TEST_PACS_{i}_URL");
             var ae = Environment.GetEnvironmentVariable($"TEST_PACS_{i}_AE");
             if (string.IsNullOrEmpty(url)) break;
-            list.Add(new TestPacsInstance($"test-pacs-{i}", ae ?? $"TEST_PACS_{i}", url));
+            var portStr = Environment.GetEnvironmentVariable($"TEST_PACS_{i}_PORT");
+            int? port = int.TryParse(portStr, out var p) ? p : null;
+            list.Add(new TestPacsInstance($"test-pacs-{i}", ae ?? $"TEST_PACS_{i}", url, port));
         }
         _instances = list;
         return list;
@@ -50,6 +52,7 @@ public static class TestPacsEndpoints
                 {
                     name = inst.Name,
                     ae_title = inst.AeTitle,
+                    dicom_port = inst.DicomPort,
                     online = true,
                     total_received = json?.GetValueOrDefault("total_received"),
                     uptime_seconds = json?.GetValueOrDefault("uptime_seconds"),
@@ -62,6 +65,7 @@ public static class TestPacsEndpoints
                 {
                     name = inst.Name,
                     ae_title = inst.AeTitle,
+                    dicom_port = inst.DicomPort,
                     online = false,
                     total_received = (object?)null,
                     uptime_seconds = (object?)null,
