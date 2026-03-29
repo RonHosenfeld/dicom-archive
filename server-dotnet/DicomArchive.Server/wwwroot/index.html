@@ -144,6 +144,17 @@
     .mb-4 { margin-bottom: 16px; }
     .mt-2 { margin-top: 8px; }
     .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+
+    /* DICOM Header Viewer */
+    .header-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .header-toolbar input { max-width: 260px; font-size: 13px; }
+    .header-toolbar select { max-width: 320px; font-size: 13px; }
+    .header-section-title { font-size: 12px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 14px 6px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+    .tag-row-depth { padding-left: calc(14px + var(--depth, 0) * 20px); }
+    .seq-item-sep td { padding: 4px 14px; font-size: 11px; color: var(--accent2); background: rgba(167,139,250,0.06); font-weight: 600; }
+    .tag-kw { color: var(--accent); }
+    .tag-vr { color: var(--muted); font-size: 11px; }
+    .tag-val { word-break: break-all; max-width: 500px; }
   </style>
 </head>
 <body>
@@ -685,12 +696,16 @@ async function openStudy(studyUid, patientLabel, studyDate) {
   const series = await api('GET', `/studies/${studyUid}/series`);
   state.studyBreadcrumb = [
     { label: 'Studies', fn: () => { state.studyBreadcrumb=[]; renderBreadcrumb(); renderStudyList(); } },
-    { label: `${patientLabel} ${studyDate}`, fn: null },
+    { label: `${patientLabel} ${studyDate}`, fn: () => openStudy(studyUid, patientLabel, studyDate) },
   ];
   renderBreadcrumb();
 
+  _headerStudyContext = { studyUid, patientLabel, studyDate, series };
   const view = document.getElementById('studiesView');
   view.innerHTML = `
+    <div style="margin-bottom:12px">
+      <button class="btn btn-secondary btn-sm" onclick="openStudyHeader('${studyUid}')">🏷 View DICOM Header</button>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>#</th><th>Description</th><th>Body Part</th><th>Laterality</th><th>View</th><th>Images</th><th></th></tr></thead>
@@ -712,12 +727,20 @@ async function openStudy(studyUid, patientLabel, studyDate) {
 
 async function openSeries(seriesUid, seriesLabel) {
   const instances = await api('GET', `/series/${seriesUid}/instances`);
+  _headerSeriesContext = { seriesUid, seriesLabel, instances };
   const last = state.studyBreadcrumb[state.studyBreadcrumb.length - 1];
-  state.studyBreadcrumb.push({ label: seriesLabel || 'Series', fn: null });
+  // If re-entering from breadcrumb, the last item is already this series; otherwise push
+  const lastItem = state.studyBreadcrumb[state.studyBreadcrumb.length - 1];
+  if (!lastItem || lastItem._seriesUid !== seriesUid) {
+    state.studyBreadcrumb.push({ label: seriesLabel || 'Series', fn: () => openSeries(seriesUid, seriesLabel), _seriesUid: seriesUid });
+  }
   renderBreadcrumb();
 
   const view = document.getElementById('studiesView');
   view.innerHTML = `
+    <div style="margin-bottom:12px">
+      <button class="btn btn-secondary btn-sm" onclick="openSeriesHeader('${seriesUid}')">🏷 View DICOM Header</button>
+    </div>
     <div class="table-wrap no-hover">
       <table>
         <thead><tr><th>#</th><th>Instance UID</th><th>Size</th><th>Transfer Syntax</th><th>Rows × Cols</th><th>SHA-256</th><th></th></tr></thead>
@@ -732,6 +755,7 @@ async function openSeries(seriesUid, seriesLabel) {
             <td class="font-mono" style="font-size:10px" title="${i.sha256}">${i.sha256?.slice(0,12)+'…' || '—'}</td>
             <td>
               <div class="flex gap-2">
+                <button class="btn btn-sm btn-secondary" onclick="openInstanceHeader('${i.instance_uid}')" title="View DICOM tags">🏷</button>
                 <a href="/api/instances/${i.instance_uid}/file" download class="btn btn-sm btn-secondary">⬇ DCM</a>
                 <select class="route-select" id="rsel_i_${i.instance_uid}">
                   <option value="">Route…</option>
@@ -752,6 +776,191 @@ async function routeInstanceFromRow(instanceUid) {
   if (!destId) return toast('Select a destination first', 'error');
   await api('POST', `/route/instance/${instanceUid}/to/${destId}`);
   toast(`Routing queued → ${state.destinations.find(d=>d.id==destId)?.name}`);
+}
+
+// ── DICOM Header Viewer ───────────────────────────────────────────────────────
+let _headerStudyContext = null;
+let _headerSeriesContext = null;
+let _headerState = { data: null, instanceUid: null, instances: [], mode: null };
+
+async function openStudyHeader(studyUid) {
+  const ctx = _headerStudyContext;
+  if (!ctx) { toast('No study context available', 'error'); return; }
+  // Show loading state immediately
+  const view = document.getElementById('studiesView');
+  view.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">Loading instances for header view…</div>';
+  try {
+    // Build instance list grouped by series
+    const instances = [];
+    const fetches = await Promise.all(ctx.series.map(s => api('GET', `/series/${s.series_uid}/instances`).then(insts => ({ series: s, insts }))));
+    for (const { series: s, insts } of fetches) {
+      for (const inst of insts) {
+        instances.push({ ...inst, seriesDesc: s.description || `Series ${s.series_number ?? '?'}` });
+      }
+    }
+    if (!instances.length) { toast('No instances found in this study', 'error'); openStudy(ctx.studyUid, ctx.patientLabel, ctx.studyDate); return; }
+    _headerState.instances = instances;
+    _headerState.mode = 'study';
+    state.studyBreadcrumb.push({ label: 'DICOM Header', fn: null });
+    renderBreadcrumb();
+    await loadAndRenderHeader(instances[0].instance_uid);
+  } catch (e) {
+    toast('Failed to load study header: ' + e.message, 'error');
+    openStudy(ctx.studyUid, ctx.patientLabel, ctx.studyDate);
+  }
+}
+
+async function openSeriesHeader(seriesUid) {
+  const ctx = _headerSeriesContext;
+  if (!ctx || !ctx.instances.length) return toast('No instances found', 'error');
+  _headerState.instances = ctx.instances.map(i => ({ ...i, seriesDesc: ctx.seriesLabel || 'Series' }));
+  _headerState.mode = 'series';
+  state.studyBreadcrumb.push({ label: 'DICOM Header', fn: null });
+  renderBreadcrumb();
+  await loadAndRenderHeader(ctx.instances[0].instance_uid);
+}
+
+async function openInstanceHeader(instanceUid) {
+  _headerState.instances = [];
+  _headerState.mode = 'instance';
+  state.studyBreadcrumb.push({ label: 'DICOM Header', fn: null });
+  renderBreadcrumb();
+  await loadAndRenderHeader(instanceUid);
+}
+
+async function loadAndRenderHeader(instanceUid) {
+  const view = document.getElementById('studiesView');
+  view.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">Loading DICOM header…</div>';
+  try {
+    const data = await api('GET', `/instances/${instanceUid}/dicom-header`);
+    _headerState.data = data;
+    _headerState.instanceUid = instanceUid;
+    renderHeaderView();
+  } catch (e) {
+    view.innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">Failed to load header: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderHeaderView() {
+  const { data, instanceUid, instances, mode } = _headerState;
+  const view = document.getElementById('studiesView');
+
+  // Navigator dropdown (only for study/series mode with multiple instances)
+  let navigatorHtml = '';
+  if (instances.length > 1) {
+    navigatorHtml = `<select class="header-toolbar" style="max-width:400px" onchange="switchHeaderInstance(this.value)">
+      ${instances.map(inst => {
+        const label = `${inst.seriesDesc || ''} — #${inst.instance_number ?? '?'} (${inst.instance_uid.slice(inst.instance_uid.lastIndexOf('.')+1)})`;
+        return `<option value="${inst.instance_uid}" ${inst.instance_uid === instanceUid ? 'selected' : ''}>${esc(label)}</option>`;
+      }).join('')}
+    </select>`;
+  }
+
+  const metaRows = data.meta.map(t => renderTagRow(t, 0)).join('');
+  const datasetRows = data.dataset.map(t => renderTagRow(t, 0)).join('');
+
+  view.innerHTML = `
+    <div class="header-toolbar">
+      ${navigatorHtml}
+      <input type="text" id="headerSearch" placeholder="Search tags (keyword, tag, value)…" oninput="filterHeaderTags()">
+      <div class="ml-auto flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="copyHeaderToClipboard()">📋 Copy</button>
+        <button class="btn btn-sm btn-secondary" onclick="exportHeaderAsFile()">💾 Export</button>
+      </div>
+    </div>
+    <div class="table-wrap no-hover">
+      <div class="header-section-title">File Meta Information</div>
+      <table>
+        <thead><tr><th style="width:120px">Tag</th><th style="width:40px">VR</th><th style="width:200px">Keyword</th><th>Value</th></tr></thead>
+        <tbody id="headerMetaBody">${metaRows}</tbody>
+      </table>
+    </div>
+    <div class="table-wrap no-hover" style="margin-top:12px">
+      <div class="header-section-title">Dataset</div>
+      <table>
+        <thead><tr><th style="width:120px">Tag</th><th style="width:40px">VR</th><th style="width:200px">Keyword</th><th>Value</th></tr></thead>
+        <tbody id="headerDatasetBody">${datasetRows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderTagRow(tag, depth) {
+  const indent = depth * 20;
+  let html = `<tr class="header-tag-row" data-keyword="${esc(tag.keyword)}" data-tag="${esc(tag.tag)}" data-value="${esc(tag.value)}">
+    <td class="font-mono" style="padding-left:${14 + indent}px">${esc(tag.tag)}</td>
+    <td class="font-mono tag-vr">${esc(tag.vr)}</td>
+    <td class="tag-kw" style="padding-left:${14 + indent}px">${esc(tag.keyword)}</td>
+    <td class="tag-val font-mono">${esc(tag.value)}</td>
+  </tr>`;
+  if (tag.items && tag.items.length) {
+    tag.items.forEach((itemTags, idx) => {
+      html += `<tr class="seq-item-sep header-tag-row" data-keyword="${esc(tag.keyword)}" data-tag="${esc(tag.tag)}" data-value="">
+        <td colspan="4" style="padding-left:${14 + (depth+1)*20}px">Item ${idx + 1}</td>
+      </tr>`;
+      itemTags.forEach(t => { html += renderTagRow(t, depth + 2); });
+    });
+  }
+  return html;
+}
+
+function filterHeaderTags() {
+  const q = (document.getElementById('headerSearch')?.value || '').toLowerCase();
+  document.querySelectorAll('.header-tag-row').forEach(row => {
+    if (!q) { row.style.display = ''; return; }
+    const kw = (row.dataset.keyword || '').toLowerCase();
+    const tag = (row.dataset.tag || '').toLowerCase();
+    const val = (row.dataset.value || '').toLowerCase();
+    row.style.display = (kw.includes(q) || tag.includes(q) || val.includes(q)) ? '' : 'none';
+  });
+}
+
+async function switchHeaderInstance(uid) {
+  await loadAndRenderHeader(uid);
+}
+
+function buildHeaderText() {
+  const { data } = _headerState;
+  if (!data) return '';
+  let text = `DICOM Header — Instance: ${_headerState.instanceUid}\n`;
+  text += '='.repeat(70) + '\n\n';
+  text += '── File Meta Information ──\n';
+  text += formatTagsAsText(data.meta, 0);
+  text += '\n── Dataset ──\n';
+  text += formatTagsAsText(data.dataset, 0);
+  return text;
+}
+
+function formatTagsAsText(tags, depth) {
+  let text = '';
+  const pad = '  '.repeat(depth);
+  for (const t of tags) {
+    text += `${pad}${t.tag} ${t.vr} ${t.keyword} = ${t.value}\n`;
+    if (t.items && t.items.length) {
+      t.items.forEach((itemTags, idx) => {
+        text += `${pad}  --- Item ${idx + 1} ---\n`;
+        text += formatTagsAsText(itemTags, depth + 2);
+      });
+    }
+  }
+  return text;
+}
+
+function copyHeaderToClipboard() {
+  const text = buildHeaderText();
+  navigator.clipboard.writeText(text).then(
+    () => toast('Header copied to clipboard'),
+    () => toast('Failed to copy', 'error')
+  );
+}
+
+function exportHeaderAsFile() {
+  const text = buildHeaderText();
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `dicom-header-${_headerState.instanceUid || 'unknown'}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function renderBreadcrumb() {

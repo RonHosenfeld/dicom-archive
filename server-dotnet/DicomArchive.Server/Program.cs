@@ -77,5 +77,6 @@ RuleEndpoints.Map(app);
 AgentEndpoints.Map(app);
 IngestEndpoints.Map(app);
 WadoEndpoints.Map(app);
+DicomHeaderEndpoints.Map(app);
 
 app.Run();
