@@ -78,5 +78,6 @@ AgentEndpoints.Map(app);
 IngestEndpoints.Map(app);
 WadoEndpoints.Map(app);
 DicomHeaderEndpoints.Map(app);
+MetricsEndpoints.Map(app);
 
 app.Run();

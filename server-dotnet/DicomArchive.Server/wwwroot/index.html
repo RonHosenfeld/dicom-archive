@@ -155,6 +155,22 @@
     .tag-kw { color: var(--accent); }
     .tag-vr { color: var(--muted); font-size: 11px; }
     .tag-val { word-break: break-all; max-width: 500px; }
+
+    /* Bar charts */
+    .bar-chart { margin: 16px 0 28px; }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+    .bar-label { width: 72px; font-size: 11px; color: var(--muted); text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .bar-track { flex: 1; height: 18px; background: var(--surface2); border-radius: 4px; overflow: hidden; display: flex; }
+    .bar-fill { height: 100%; border-radius: 4px 0 0 4px; transition: width 0.3s; min-width: 1px; }
+    .bar-fill:last-child { border-radius: 0 4px 4px 0; }
+    .bar-fill:only-child { border-radius: 4px; }
+    .bar-fill.accent { background: var(--accent); }
+    .bar-fill.green  { background: var(--green); }
+    .bar-fill.red    { background: var(--red); }
+    .bar-fill.amber  { background: var(--amber); }
+    .bar-value { width: 90px; font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; }
+    .metrics-section { margin-bottom: 28px; }
+    .metrics-section-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -171,6 +187,8 @@
     <div class="nav-item" data-page="destinations"><span class="icon">📡</span> Destinations</div>
     <div class="nav-item" data-page="rules"><span class="icon">⚙️</span> Rules</div>
     <div class="nav-item" data-page="routelog"><span class="icon">📜</span> Route Log</div>
+    <div class="nav-section" style="margin-top:8px">System</div>
+    <div class="nav-item" data-page="metrics"><span class="icon">📈</span> Metrics</div>
   </aside>
 
   <!-- Main -->
@@ -277,6 +295,34 @@
         </table>
       </div>
       <div class="empty hidden" id="routeLogEmpty"><div class="icon">📜</div><p>No routing activity yet</p></div>
+    </div>
+
+    <!-- ── Metrics ── -->
+    <div id="page-metrics" class="hidden">
+      <div class="page-header">
+        <div class="page-title">System Metrics</div>
+        <div class="flex gap-2 items-center">
+          <select id="metricsRange" style="width:auto;font-size:13px;padding:6px 28px 6px 10px" onchange="loadMetrics()">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadMetrics()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="stat-grid" id="metricsStats"></div>
+      <div class="metrics-section">
+        <div class="metrics-section-title">Ingest Throughput</div>
+        <div id="chartIngest"></div>
+      </div>
+      <div class="metrics-section">
+        <div class="metrics-section-title">Archive Growth</div>
+        <div id="chartStorage"></div>
+      </div>
+      <div class="metrics-section">
+        <div class="metrics-section-title">Routing Outcomes</div>
+        <div id="chartRouting"></div>
+      </div>
     </div>
 
   </main>
@@ -507,6 +553,7 @@ function showPage(page) {
     destinations: loadDestinations,
     rules:        loadRules,
     routelog:     loadRouteLog,
+    metrics:      loadMetrics,
   };
   loaders[page]?.();
 }
@@ -1546,6 +1593,97 @@ function toast(msg, type='success') {
   el.textContent = msg;
   document.getElementById('toastContainer').appendChild(el);
   setTimeout(() => el.remove(), 4500);
+}
+
+// ── Metrics ──────────────────────────────────────────────────────────────────
+async function loadMetrics() {
+  const days = parseInt(document.getElementById('metricsRange')?.value || '30');
+  const bucket = days <= 7 ? 'hour' : 'day';
+  try {
+    const [summary, ingest, storage, routing] = await Promise.all([
+      api('GET', '/metrics/summary'),
+      api('GET', `/metrics/ingest?days=${days}&bucket=${bucket}`),
+      api('GET', `/metrics/storage?days=${days}&bucket=${bucket}`),
+      api('GET', `/metrics/routing?days=${days}&bucket=${bucket}`),
+    ]);
+    renderMetricsSummary(summary);
+    renderIngestChart(ingest, bucket);
+    renderStorageChart(storage, bucket);
+    renderRoutingChart(routing, bucket);
+  } catch(e) { toast('Failed to load metrics: ' + e.message, 'error'); }
+}
+
+function renderMetricsSummary(s) {
+  document.getElementById('metricsStats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Exams Today</div><div class="stat-value">${s.exams_today}</div></div>
+    <div class="stat-card"><div class="stat-label">Exams 7d</div><div class="stat-value">${s.exams_7d}</div></div>
+    <div class="stat-card"><div class="stat-label">Exams 30d</div><div class="stat-value">${s.exams_30d}</div></div>
+    <div class="stat-card"><div class="stat-label">Instances Today</div><div class="stat-value">${s.instances_today}</div></div>
+    <div class="stat-card"><div class="stat-label">Instances 7d</div><div class="stat-value">${s.instances_7d}</div></div>
+    <div class="stat-card"><div class="stat-label">Instances 30d</div><div class="stat-value">${s.instances_30d}</div></div>
+    <div class="stat-card"><div class="stat-label">Bytes 30d</div><div class="stat-value" style="font-size:22px">${fmtBytes(s.bytes_30d)}</div></div>
+    <div class="stat-card"><div class="stat-label">Routes OK 30d</div><div class="stat-value text-green">${s.routes_ok_30d}</div></div>
+    <div class="stat-card"><div class="stat-label">Routes Failed 30d</div><div class="stat-value ${s.routes_failed_30d>0?'text-red':''}">${s.routes_failed_30d}</div></div>
+  `;
+}
+
+function metricsDateLabel(iso, bucket) {
+  const d = new Date(iso);
+  if (bucket === 'hour') return d.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'numeric'});
+  return d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+
+function renderBarChart(containerId, rows) {
+  const el = document.getElementById(containerId);
+  if (!rows.length) { el.innerHTML = '<div class="empty" style="padding:24px"><p>No data for this period</p></div>'; return; }
+  const maxTotal = Math.max(...rows.map(r => r.segments.reduce((a,s) => a + s.value, 0)), 1);
+  el.innerHTML = '<div class="bar-chart">' + rows.map(r => {
+    const total = r.segments.reduce((a,s) => a + s.value, 0);
+    const fills = r.segments.filter(s => s.value > 0).map(s =>
+      `<div class="bar-fill ${s.cssClass}" style="width:${(s.value/maxTotal*100).toFixed(1)}%" title="${s.label}: ${s.value}"></div>`
+    ).join('');
+    return `<div class="bar-row">
+      <div class="bar-label">${r.label}</div>
+      <div class="bar-track">${fills}</div>
+      <div class="bar-value">${r.valueText || total.toLocaleString()}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderIngestChart(data, bucket) {
+  const rows = data.map(d => ({
+    label: metricsDateLabel(d.period, bucket),
+    segments: [{value: d.instances, cssClass: 'accent', label: 'Instances'}],
+    valueText: `${d.instances} inst / ${d.exams} exams`
+  }));
+  renderBarChart('chartIngest', rows);
+}
+
+function renderStorageChart(data, bucket) {
+  const buckets = data.buckets || [];
+  const rows = buckets.map(d => ({
+    label: metricsDateLabel(d.period, bucket),
+    segments: [{value: d.bytes_added, cssClass: 'accent', label: 'Bytes added'}],
+    valueText: `+${fmtBytes(d.bytes_added)} (${fmtBytes(data.base_bytes + d.cumulative_bytes)} total)`
+  }));
+  renderBarChart('chartStorage', rows);
+}
+
+function renderRoutingChart(data, bucket) {
+  const rows = data.map(d => {
+    const total = d.success + d.failed + d.queued;
+    const latency = d.avg_latency_sec != null ? ` · ${d.avg_latency_sec.toFixed(1)}s avg` : '';
+    return {
+      label: metricsDateLabel(d.period, bucket),
+      segments: [
+        {value: d.success, cssClass: 'green', label: 'Success'},
+        {value: d.failed, cssClass: 'red', label: 'Failed'},
+        {value: d.queued, cssClass: 'amber', label: 'Queued'},
+      ],
+      valueText: `${total}${latency}`
+    };
+  });
+  renderBarChart('chartRouting', rows);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

@@ -16,3 +16,13 @@ record RuleIn(string Name, int Priority, bool Enabled, string? MatchModality, st
 // StudyEndpoints
 record StudySummary(int Id, string StudyUid, DateOnly? StudyDate, string? Accession, string? Description, string? Modality, string PatientId, string? PatientName, DateOnly? BirthDate, int SeriesCount, int InstanceCount);
 record StatsResult(long TotalPatients, long TotalStudies, long TotalSeries, long TotalInstances, long TotalBytes, long RoutesOk, long RoutesFailed, long RoutesQueued);
+
+// MetricsEndpoints
+record MetricsSummary(long ExamsToday, long Exams7d, long Exams30d,
+    long InstancesToday, long Instances7d, long Instances30d,
+    long BytesToday, long Bytes7d, long Bytes30d,
+    long RoutesOk30d, long RoutesFailed30d);
+record IngestBucket(DateTime Period, long Exams, long Series, long Instances, long Bytes);
+record StorageBucket(DateTime Period, long InstancesAdded, long BytesAdded, long CumulativeBytes);
+record StorageMetrics(long BaseBytes, List<StorageBucket> Buckets);
+record RoutingBucket(DateTime Period, long Success, long Failed, long Queued, double? AvgLatencySec);
