@@ -1,3 +1,6 @@
+using DicomArchive.Server.Data;
+using Microsoft.EntityFrameworkCore;
+
 namespace DicomArchive.Server.Services;
 
 /// <summary>
@@ -22,6 +25,9 @@ public class QueueProcessorService(
 
             try
             {
+                // Reset stale claims from crashed agents
+                await ResetStaleClaims(stoppingToken);
+
                 int processed;
                 do
                 {
@@ -45,5 +51,24 @@ public class QueueProcessorService(
         }
 
         logger.LogInformation("Queue processor stopped");
+    }
+
+    private async Task ResetStaleClaims(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<ArchiveDbContext>();
+            var reset = await db.Database.ExecuteSqlRawAsync("""
+                UPDATE remote_routing_log SET status = 'published', claimed_at = NULL
+                WHERE status = 'claimed' AND claimed_at < NOW() - INTERVAL '5 minutes'
+                """, ct);
+            if (reset > 0)
+                logger.LogInformation("Reset {Count} stale remote routing claim(s)", reset);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error resetting stale claims");
+        }
     }
 }

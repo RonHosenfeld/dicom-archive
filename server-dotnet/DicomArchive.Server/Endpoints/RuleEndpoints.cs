@@ -144,6 +144,7 @@ public static class RuleEndpoints
         string? date_from = null, string? date_to = null,
         int limit = 100, int offset = 0)
     {
+        // ── Direct routing entries ──
         var q = db.RoutingLog
             .Include(rl => rl.Instance).ThenInclude(i => i!.Series).ThenInclude(s => s.Exam)
             .Include(rl => rl.Destination)
@@ -169,9 +170,9 @@ public static class RuleEndpoints
             );
         }
 
-        var log = await q
+        var directLog = await q
             .OrderByDescending(rl => rl.QueuedAt)
-            .Skip(offset).Take(Math.Min(limit, 500))
+            .Take(Math.Min(limit, 500))
             .Select(rl => new {
                 rl.Id, rl.Status, rl.Attempts, rl.LastError,
                 rl.QueuedAt, rl.SentAt,
@@ -183,9 +184,62 @@ public static class RuleEndpoints
                 DestinationName = rl.Destination != null ? rl.Destination.Name : null,
                 DestinationId   = rl.DestinationId,
                 RuleName        = rl.Rule != null ? rl.Rule.Name : "Manual",
+                Mode            = "direct",
+                RemoteAgentAe   = (string?)null,
             })
             .ToListAsync();
-        return Results.Ok(log);
+
+        // ── Remote routing entries ──
+        var rq = db.RemoteRoutingLog
+            .Include(r => r.Destination)
+            .Include(r => r.Rule)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(status))
+            rq = rq.Where(r => r.Status == status);
+        if (!string.IsNullOrEmpty(destination))
+            rq = rq.Where(r => r.Destination != null && r.Destination.Name == destination);
+        if (DateTime.TryParse(date_from, out var rdf))
+            rq = rq.Where(r => r.PublishedAt >= rdf);
+        if (DateTime.TryParse(date_to, out var rdt))
+            rq = rq.Where(r => r.PublishedAt <= rdt.AddDays(1));
+        if (!string.IsNullOrEmpty(search))
+        {
+            var pattern = $"%{search}%";
+            rq = rq.Where(r =>
+                EF.Functions.ILike(r.StudyUid, pattern) ||
+                (r.Destination != null && EF.Functions.ILike(r.Destination.Name, pattern)) ||
+                (r.Rule != null && EF.Functions.ILike(r.Rule.Name, pattern)) ||
+                (r.RemoteAgentAe != null && EF.Functions.ILike(r.RemoteAgentAe, pattern)) ||
+                (r.LastError != null && EF.Functions.ILike(r.LastError, pattern))
+            );
+        }
+
+        var remoteLog = await rq
+            .OrderByDescending(r => r.PublishedAt)
+            .Take(Math.Min(limit, 500))
+            .Select(r => new {
+                r.Id, r.Status, Attempts = 0, r.LastError,
+                QueuedAt = r.PublishedAt, SentAt = r.CompletedAt,
+                InstanceUid     = (string?)null,
+                StudyUid        = (string?)r.StudyUid,
+                Accession       = (string?)null,
+                DestinationName = r.Destination != null ? r.Destination.Name : null,
+                DestinationId   = r.DestinationId,
+                RuleName        = r.Rule != null ? r.Rule.Name : "Manual",
+                Mode            = "remote",
+                RemoteAgentAe   = r.RemoteAgentAe,
+            })
+            .ToListAsync();
+
+        // Merge both lists, sorted by time descending
+        var merged = directLog.Concat(remoteLog)
+            .OrderByDescending(e => e.QueuedAt)
+            .Skip(offset)
+            .Take(Math.Min(limit, 500))
+            .ToList();
+
+        return Results.Ok(merged);
     }
 
     static async Task<IResult> ResendRoute(ArchiveDbContext db, RouterService router, int id)

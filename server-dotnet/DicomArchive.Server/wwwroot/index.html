@@ -293,6 +293,9 @@
           <option value="sending">Sending</option>
           <option value="success">Success</option>
           <option value="failed">Failed</option>
+          <option value="published">Published</option>
+          <option value="claimed">Claimed</option>
+          <option value="delivered">Delivered</option>
         </select>
         <select id="rlDest" style="max-width:160px">
           <option value="">All destinations</option>
@@ -303,7 +306,7 @@
       </div>
       <div class="table-wrap no-hover">
         <table>
-          <thead><tr><th>Time</th><th>Accession</th><th>Instance</th><th>Destination</th><th>Rule</th><th>Status</th><th>Attempts</th><th>Error</th><th></th></tr></thead>
+          <thead><tr><th>Time</th><th>Mode</th><th>Study / Instance</th><th>Destination</th><th>Rule</th><th>Status</th><th>Attempts</th><th>Error</th><th></th></tr></thead>
           <tbody id="routeLogTable"></tbody>
         </table>
       </div>
@@ -410,9 +413,9 @@
       <label>Routing Mode</label>
       <select id="destRoutingMode" onchange="toggleRemoteFields()">
         <option value="direct">Direct (C-STORE SCU from server)</option>
-        <option value="remote">Remote (via Service Bus to agent)</option>
+        <option value="remote">Remote (via agent polling)</option>
       </select>
-      <div class="form-hint">Direct: server sends directly via DICOM. Remote: publishes to Service Bus for a remote agent to pull and deliver.</div>
+      <div class="form-hint">Direct: server sends directly via DICOM. Remote: a remote agent polls for and delivers studies.</div>
     </div>
     <div id="remoteFields" class="hidden">
       <div class="form-group">
@@ -1537,18 +1540,27 @@ async function loadRouteLog(filters = {}) {
   const btn = document.getElementById('rlFilterBtn');
   if (btn) btn.textContent = hasFilter ? 'Clear' : 'Search';
 
-  tbody.innerHTML = log.map(r => `
-    <tr>
+  tbody.innerHTML = log.map(r => {
+    const isRemote = r.mode === 'remote';
+    const modeBadge = isRemote
+      ? `<span class="badge badge-purple" style="font-size:10px">Remote</span>`
+      : `<span class="badge badge-blue" style="font-size:10px">Direct</span>`;
+    const identifier = isRemote
+      ? `<span title="${esc(r.study_uid||'')}">${esc((r.study_uid||'—').slice(-12))}${r.remote_agent_ae ? ' → '+esc(r.remote_agent_ae) : ''}</span>`
+      : `<span class="truncate" title="${esc(r.instance_uid||'')}" style="max-width:160px">${esc(r.instance_uid||'—')}</span>`;
+    const resendBtn = (!isRemote && r.status === 'failed') ? `<button class="btn btn-sm btn-amber" onclick="resendRoute(${r.id})">↻</button>` : '';
+    return `<tr>
       <td class="font-mono">${fmtTime(r.queued_at)}</td>
-      <td class="font-mono">${esc(r.accession||'—')}</td>
-      <td class="font-mono truncate" title="${r.instance_uid}" style="max-width:160px">${r.instance_uid||'—'}</td>
+      <td>${modeBadge}</td>
+      <td class="font-mono">${identifier}</td>
       <td>${esc(r.destination_name||'—')}</td>
       <td>${esc(r.rule_name||'Manual')}</td>
       <td>${statusBadge(r.status)}</td>
-      <td style="text-align:center">${r.attempts}</td>
+      <td style="text-align:center">${isRemote ? '—' : r.attempts}</td>
       <td class="text-muted" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.last_error||'')}">${esc(r.last_error||'—')}</td>
-      <td>${r.status === 'failed' ? `<button class="btn btn-sm btn-amber" onclick="resendRoute(${r.id})">↻</button>` : ''}</td>
-    </tr>`).join('');
+      <td>${resendBtn}</td>
+    </tr>`;
+  }).join('');
 }
 
 function applyRouteLogFilters() {
@@ -1599,7 +1611,7 @@ function closeModal(e) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function statusBadge(s) {
-  const map = { success:'green', delivered:'green', failed:'red', queued:'amber', sending:'blue', published:'purple', publishing:'blue' };
+  const map = { success:'green', delivered:'green', failed:'red', queued:'amber', sending:'blue', published:'purple', claimed:'amber', publishing:'blue' };
   return `<span class="badge badge-${map[s]||'muted'}">${s||'—'}</span>`;
 }
 function fmtTime(iso) {

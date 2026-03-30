@@ -141,6 +141,7 @@ public class RemoteRoutingLogEntry
     public int InstancesDelivered { get; set; }
     public string? LastError { get; set; }
     public DateTime? PublishedAt { get; set; }
+    public DateTime? ClaimedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
 
     public RoutingRule? Rule { get; set; }

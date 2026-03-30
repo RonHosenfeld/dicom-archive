@@ -15,11 +15,6 @@ var storage = builder.AddAzureStorage("azure-storage")
         emulator.WithArgs("--disableProductStyleUrl"));  // path-style URLs for Docker networking
 var blobs = storage.AddBlobs("blobs");
 
-// ── Azure Service Bus (emulator for local dev) ──────────────────────────────
-var serviceBus = builder.AddAzureServiceBus("service-bus")
-    .RunAsEmulator();
-serviceBus.AddServiceBusTopic("routed-exams");
-
 // ── Seq (structured logging) ─────────────────────────────────────────────────
 var seq = builder.AddSeq("seq")
     .ExcludeFromManifest();                 // ephemeral — no volume, resets each run
@@ -30,8 +25,6 @@ var server = builder.AddProject<Projects.DicomArchive_Server>("dicom-server")
     .WaitFor(postgres)
     .WithReference(blobs)
     .WaitFor(storage)
-    .WithReference(serviceBus)
-    .WaitFor(serviceBus)
     .WithReference(seq)
     .WithEnvironment("STORAGE_BACKEND",  "azure")
     .WithEnvironment("AZURE_CONTAINER",  "dicom-files")
@@ -56,7 +49,7 @@ builder.AddDockerfile("dicom-agent", "../../agent")
     .WithBindMount("../../data/quarantine", "/data/quarantine")
     .WithEndpoint(port: 11112, targetPort: 11112, scheme: "tcp", name: "dicom");
 
-// ── Remote Agents (pull from Service Bus, forward to test PACS) ─────────────
+// ── Remote Agents (poll server for pending routes, forward to test PACS) ────
 for (int i = 1; i <= 3; i++)
 {
     var agentName = $"dicom-agent-remote-{i}";
@@ -66,7 +59,6 @@ for (int i = 1; i <= 3; i++)
     builder.AddDockerfile(agentName, "../../agent")
         .WaitFor(server)
         .WaitFor(storage)
-        .WaitFor(serviceBus)
         .WithEnvironment("AE_TITLE",                     aeTitle)
         .WithEnvironment("LISTEN_PORT",                   hostPort.ToString())
         .WithEnvironment("SERVER_URL",                    server.GetEndpoint("web"))
@@ -74,7 +66,6 @@ for (int i = 1; i <= 3; i++)
         .WithEnvironment("UPLOAD_WORKERS",                "2")
         .WithEnvironment("STAGING_PATH",                  "/data/staging")
         .WithEnvironment("REMOTE_ROUTING_ENABLED",        "true")
-        .WithEnvironment("SERVICE_BUS_CONNECTION_STRING", serviceBus.Resource.ConnectionStringExpression)
         .WithEnvironment("PULL_WORKERS",                  "2")
         .WithEnvironment("SEQ_URL",                       seq.GetEndpoint("http"))
         .WithBindMount($"../../data/remote-{i}-staging",    "/data/staging")

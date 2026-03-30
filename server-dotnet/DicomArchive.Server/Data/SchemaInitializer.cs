@@ -235,6 +235,21 @@ public static class SchemaInitializer
         CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);
         CREATE INDEX IF NOT EXISTS idx_routing_log_queued_at ON routing_log(queued_at DESC);
         CREATE INDEX IF NOT EXISTS idx_remote_routing_log_study_uid ON remote_routing_log(study_uid);
+
+        -- Non-destructive migration: add claimed_at column to remote_routing_log
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='remote_routing_log' AND column_name='claimed_at'
+          ) THEN
+            ALTER TABLE remote_routing_log ADD COLUMN claimed_at TIMESTAMPTZ;
+          END IF;
+        END $$;
+
+        -- Partial index for pending remote routes (used by polling endpoint)
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_pending
+            ON remote_routing_log(remote_agent_ae) WHERE status IN ('published', 'claimed');
         """;
 
     public static async Task RunAsync(IServiceProvider services, ILogger logger)

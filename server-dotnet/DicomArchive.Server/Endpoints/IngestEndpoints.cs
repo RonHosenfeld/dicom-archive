@@ -30,7 +30,8 @@ public static class IngestEndpoints
         group.MapGet("/studies/{studyUid}/instances", ListStudyInstances);
         group.MapGet("/instances/{instanceUid}/download", DownloadInstance);
 
-        // Remote routing acknowledgment
+        // Remote routing: polling + acknowledgment
+        group.MapGet("/pending-routes", PendingRoutes);
         group.MapPost("/remote-routing/{id:int}/ack", AckRemoteRouting);
 
         // Manual routing (used by UI, does not require agent auth)
@@ -254,7 +255,6 @@ public static class IngestEndpoints
 
     static async Task<IResult> Register(
         ArchiveDbContext db,
-        DicomArchive.Server.Services.AgentSubscriptionService subscriptionService,
         [FromBody] AgentRegistration? body,
         ILogger<Program> logger)
     {
@@ -277,12 +277,6 @@ public static class IngestEndpoints
         await db.SaveChangesAsync();
         logger.LogInformation("Agent registered: [{AeTitle}] from {Host}", ae, body.Host);
 
-        // If agent supports remote routing, ensure its Service Bus subscription exists
-        if (body.RemoteRoutingEnabled == true && subscriptionService.IsConfigured)
-        {
-            _ = Task.Run(() => subscriptionService.EnsureSubscriptionAsync(ae));
-        }
-
         return Results.Ok(new { ok = true, agent });
     }
 
@@ -303,6 +297,72 @@ public static class IngestEndpoints
         await db.SaveChangesAsync();
 
         return Results.Ok(new { ok = true });
+    }
+
+    // ── Pending routes (polling endpoint for remote agents) ─────────────────────
+
+    static async Task<IResult> PendingRoutes(
+        ArchiveDbContext db,
+        ILogger<Program> logger,
+        [FromQuery(Name = "agent_ae")] string? agentAe)
+    {
+        if (string.IsNullOrEmpty(agentAe))
+            return Results.BadRequest(new { error = "Missing agent_ae query parameter" });
+
+        var ae = agentAe.ToUpper();
+
+        // Atomically claim up to 5 published entries for this agent using raw ADO.NET
+        // (EF Core's SqlQueryRaw cannot handle UPDATE ... RETURNING)
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+            await conn.OpenAsync();
+
+        var claimedIds = new List<int>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE remote_routing_log
+                SET status = 'claimed', claimed_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM remote_routing_log
+                    WHERE remote_agent_ae = @p0 AND status = 'published'
+                    ORDER BY published_at
+                    LIMIT 5
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id
+                """;
+            var p = cmd.CreateParameter();
+            p.ParameterName = "p0";
+            p.Value = ae;
+            cmd.Parameters.Add(p);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                claimedIds.Add(reader.GetInt32(0));
+        }
+
+        if (claimedIds.Count == 0)
+            return Results.Ok(Array.Empty<object>());
+
+        // Fetch destination details for the claimed entries
+        var entries = await db.RemoteRoutingLog
+            .Include(r => r.Destination)
+            .Where(r => claimedIds.Contains(r.Id))
+            .ToListAsync();
+
+        var result = entries.Select(e => new
+        {
+            id = e.Id,
+            study_uid = e.StudyUid,
+            destination_ae_title = e.Destination?.AeTitle,
+            destination_host = e.Destination?.Host,
+            destination_port = e.Destination?.Port ?? 104,
+            instance_count = e.InstanceCount,
+        }).ToList();
+
+        logger.LogInformation("Agent {Ae} claimed {Count} pending route(s)", ae, result.Count);
+        return Results.Ok(result);
     }
 
     // ── Study download for remote agents ────────────────────────────────────────
@@ -443,3 +503,4 @@ public record ConfirmRequest
     public int InstanceId { get; init; }
     public string? Sha256 { get; init; }
 }
+

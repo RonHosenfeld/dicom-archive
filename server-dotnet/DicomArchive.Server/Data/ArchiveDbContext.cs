@@ -166,6 +166,7 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
             e.Property(r => r.InstancesDelivered).HasColumnName("instances_delivered");
             e.Property(r => r.LastError).HasColumnName("last_error");
             e.Property(r => r.PublishedAt).HasColumnName("published_at");
+            e.Property(r => r.ClaimedAt).HasColumnName("claimed_at");
             e.Property(r => r.CompletedAt).HasColumnName("completed_at");
             e.HasOne(r => r.Rule).WithMany().HasForeignKey(r => r.RuleId);
             e.HasOne(r => r.Destination).WithMany().HasForeignKey(r => r.DestinationId);

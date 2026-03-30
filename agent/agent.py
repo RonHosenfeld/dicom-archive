@@ -83,8 +83,6 @@ AGENT_API_KEY  = os.getenv("AGENT_API_KEY", "")
 UPLOAD_WORKERS = int(os.getenv("UPLOAD_WORKERS", "4"))
 
 REMOTE_ROUTING_ENABLED = os.getenv("REMOTE_ROUTING_ENABLED", "false").lower() in ("true", "1", "yes")
-SERVICE_BUS_CONNECTION_STRING = os.getenv("SERVICE_BUS_CONNECTION_STRING", "")
-SB_ROUTED_EXAMS_TOPIC = os.getenv("SB_ROUTED_EXAMS_TOPIC", "routed-exams")
 PULL_WORKERS = int(os.getenv("PULL_WORKERS", "2"))
 
 QUARANTINE.mkdir(parents=True, exist_ok=True)
@@ -358,7 +356,7 @@ def run():
         _instance_counter = _heartbeat_loop(interval=60)
 
     # ── Start pull engine for remote routing ──
-    if REMOTE_ROUTING_ENABLED and SERVICE_BUS_CONNECTION_STRING:
+    if REMOTE_ROUTING_ENABLED:
         if _event_loop is None:
             _event_loop = asyncio.new_event_loop()
             loop_thread = threading.Thread(
@@ -367,21 +365,14 @@ def run():
                 name="pull-loop",
             )
             loop_thread.start()
-        subscription = f"agent-{AE_TITLE.lower()}"
         pull_engine = PullEngine(
-            servicebus_conn=SERVICE_BUS_CONNECTION_STRING,
-            topic=SB_ROUTED_EXAMS_TOPIC,
-            subscription=subscription,
             server_url=SERVER_URL,
             api_key=AGENT_API_KEY,
             ae_title=AE_TITLE,
             workers=PULL_WORKERS,
         )
         asyncio.run_coroutine_threadsafe(pull_engine.start(), _event_loop)
-        logger.info("Pull engine started (%d workers, topic=%s, sub=%s)",
-                     PULL_WORKERS, SB_ROUTED_EXAMS_TOPIC, subscription)
-    elif REMOTE_ROUTING_ENABLED:
-        logger.warning("REMOTE_ROUTING_ENABLED=true but SERVICE_BUS_CONNECTION_STRING not set")
+        logger.info("Pull engine started (%d workers, polling server)", PULL_WORKERS)
 
     ae.start_server(
         (LISTEN_HOST, LISTEN_PORT),

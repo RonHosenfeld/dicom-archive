@@ -17,7 +17,6 @@ namespace DicomArchive.Server.Services;
 public class RouterService(
     IDbContextFactory<ArchiveDbContext> dbFactory,
     StorageService storage,
-    ServiceBusPublisherService serviceBus,
     ILogger<RouterService> logger)
 {
     private static readonly ActivitySource ActivitySource = new("DicomArchive.Router");
@@ -78,9 +77,14 @@ public class RouterService(
 
         if (matchingDestinations.Count == 0)
         {
-            logger.LogDebug("No on-receive rules matched instance {Id}", instanceId);
+            logger.LogInformation("No on-receive rules matched instance {Id} (modality={Modality}, sendingAe={SendingAe}, receivingAe={ReceivingAe})",
+                instanceId, modality, sendingAe, receivingAe);
             return 0;
         }
+
+        logger.LogInformation("Matched {Count} destination(s) for instance {Id}: {Destinations}",
+            matchingDestinations.Count, instanceId,
+            string.Join(", ", matchingDestinations.Select(d => $"{d.Destination.Name}[mode={d.Destination.RoutingMode}]")));
 
         int queued = 0;
         foreach (var match in matchingDestinations)
@@ -96,7 +100,7 @@ public class RouterService(
                                 && r.Status != "failed");
                 if (alreadyPublished)
                 {
-                    logger.LogDebug("Remote route already published: study={StudyUid} dest={DestId}",
+                    logger.LogInformation("Remote route already published: study={StudyUid} dest={DestId} — skipping duplicate",
                         studyUid, match.DestinationId);
                     continue;
                 }
@@ -111,28 +115,11 @@ public class RouterService(
                     RuleId         = match.RuleId,
                     DestinationId  = match.DestinationId,
                     RemoteAgentAe  = match.Destination.RemoteAgentAe,
-                    Status         = "publishing",
+                    Status         = "published",
                     InstanceCount  = instanceCount,
                     PublishedAt    = DateTime.UtcNow,
                 };
                 db.RemoteRoutingLog.Add(entry);
-                await db.SaveChangesAsync();
-
-                // Publish to Service Bus
-                var messageId = await serviceBus.PublishStudyRouteAsync(
-                    studyUid,
-                    match.Destination.RemoteAgentAe ?? match.Destination.AeTitle,
-                    match.Destination.AeTitle,
-                    match.Destination.Host,
-                    match.Destination.Port,
-                    match.RuleId,
-                    match.DestinationId,
-                    entry.Id,
-                    instanceCount);
-
-                entry.ServiceBusMessageId = messageId;
-                entry.Status = messageId is not null ? "published" : "failed";
-                if (messageId is null) entry.LastError = "Service Bus not configured";
                 await db.SaveChangesAsync();
 
                 logger.LogInformation(
