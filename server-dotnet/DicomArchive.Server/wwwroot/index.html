@@ -633,16 +633,28 @@ async function loadDashboard() {
       <div class="stat-value" style="font-size:22px">${size}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Routes Success</div>
+      <div class="stat-label">Direct Success</div>
       <div class="stat-value text-green">${stats.routes_ok}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Routes Failed</div>
+      <div class="stat-label">Direct Failed</div>
       <div class="stat-value ${stats.routes_failed>0?'text-red':''}">${stats.routes_failed}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Routes Queued</div>
+      <div class="stat-label">Direct Queued</div>
       <div class="stat-value">${stats.routes_queued}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remote Published</div>
+      <div class="stat-value">${stats.remote_published}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remote Claimed</div>
+      <div class="stat-value">${stats.remote_claimed}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remote Delivered</div>
+      <div class="stat-value text-green">${stats.remote_delivered}</div>
     </div>
   `;
 
@@ -651,17 +663,24 @@ async function loadDashboard() {
       <div style="font-size:13px;font-weight:600;margin-bottom:12px">Recent Routing Activity</div>
       <div class="table-wrap no-hover" style="font-size:12px">
         <table>
-          <thead><tr><th>Time</th><th>Instance</th><th>Destination</th><th>Status</th></tr></thead>
+          <thead><tr><th>Time</th><th>Mode</th><th>Study / Instance</th><th>Destination</th><th>Status</th></tr></thead>
           <tbody>
           ${log.length === 0
-            ? `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">No activity yet</td></tr>`
-            : log.map(r => `
+            ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">No activity yet</td></tr>`
+            : log.map(r => {
+                const uid = r.mode === 'remote'
+                  ? (r.study_uid?.slice(-12)||'—')
+                  : (r.instance_uid?.slice(-12)||'—');
+                const fullUid = r.mode === 'remote' ? r.study_uid : r.instance_uid;
+                return `
               <tr>
                 <td class="font-mono">${fmtTime(r.queued_at)}</td>
-                <td class="font-mono truncate" style="max-width:140px" title="${r.instance_uid}">${r.instance_uid?.slice(-12)||'—'}</td>
+                <td>${r.mode === 'remote' ? '<span class="badge badge-purple">Remote</span>' : '<span class="badge badge-blue">Direct</span>'}</td>
+                <td class="font-mono truncate" style="max-width:140px" title="${fullUid||''}">${uid}</td>
                 <td>${r.destination_name||'—'}</td>
                 <td>${statusBadge(r.status)}</td>
-              </tr>`).join('')
+              </tr>`;
+              }).join('')
           }
           </tbody>
         </table>

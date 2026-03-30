@@ -119,14 +119,17 @@ public static class StudyEndpoints
     static async Task<IResult> GetStats(ArchiveDbContext db)
     {
         var stats = new StatsResult(
-            TotalPatients : await db.Patients.LongCountAsync(),
-            TotalStudies  : await db.Exams.LongCountAsync(),
-            TotalSeries   : await db.Series.LongCountAsync(),
-            TotalInstances: await db.Instances.LongCountAsync(),
-            TotalBytes    : await db.Instances.SumAsync(i => i.SizeBytes ?? 0),
-            RoutesOk      : await db.RoutingLog.LongCountAsync(r => r.Status == "success"),
-            RoutesFailed  : await db.RoutingLog.LongCountAsync(r => r.Status == "failed"),
-            RoutesQueued  : await db.RoutingLog.LongCountAsync(r => r.Status == "queued")
+            TotalPatients    : await db.Patients.LongCountAsync(),
+            TotalStudies     : await db.Exams.LongCountAsync(),
+            TotalSeries      : await db.Series.LongCountAsync(),
+            TotalInstances   : await db.Instances.LongCountAsync(),
+            TotalBytes       : await db.Instances.SumAsync(i => i.SizeBytes ?? 0),
+            RoutesOk         : await db.RoutingLog.LongCountAsync(r => r.Status == "success"),
+            RoutesFailed     : await db.RoutingLog.LongCountAsync(r => r.Status == "failed"),
+            RoutesQueued     : await db.RoutingLog.LongCountAsync(r => r.Status == "queued"),
+            RemotePublished  : await db.RemoteRoutingLog.LongCountAsync(r => r.Status == "published"),
+            RemoteClaimed    : await db.RemoteRoutingLog.LongCountAsync(r => r.Status == "claimed"),
+            RemoteDelivered  : await db.RemoteRoutingLog.LongCountAsync(r => r.Status == "delivered")
         );
         return Results.Ok(stats);
     }

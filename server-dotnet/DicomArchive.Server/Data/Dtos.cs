@@ -15,7 +15,9 @@ record RuleIn(string Name, int Priority, bool Enabled, string? MatchModality, st
 
 // StudyEndpoints
 record StudySummary(int Id, string StudyUid, DateOnly? StudyDate, string? Accession, string? Description, string? Modality, string PatientId, string? PatientName, DateOnly? BirthDate, int SeriesCount, int InstanceCount);
-record StatsResult(long TotalPatients, long TotalStudies, long TotalSeries, long TotalInstances, long TotalBytes, long RoutesOk, long RoutesFailed, long RoutesQueued);
+record StatsResult(long TotalPatients, long TotalStudies, long TotalSeries, long TotalInstances, long TotalBytes,
+    long RoutesOk, long RoutesFailed, long RoutesQueued,
+    long RemotePublished, long RemoteClaimed, long RemoteDelivered);
 
 // MetricsEndpoints
 record MetricsSummary(long ExamsToday, long Exams7d, long Exams30d,
