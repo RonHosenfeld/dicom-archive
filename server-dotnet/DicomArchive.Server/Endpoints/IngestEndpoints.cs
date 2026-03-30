@@ -373,12 +373,12 @@ public static class IngestEndpoints
             .Where(i => i.Series.Exam.StudyUid == studyUid)
             .Select(i => new
             {
-                i.InstanceUid,
-                i.BlobKey,
-                i.SizeBytes,
-                i.Sha256,
-                SeriesUid = i.Series.SeriesUid,
-                Modality = i.Series.Exam.Modality,
+                instance_uid = i.InstanceUid,
+                blob_key = i.BlobKey,
+                size_bytes = i.SizeBytes,
+                sha256 = i.Sha256,
+                series_uid = i.Series.SeriesUid,
+                modality = i.Series.Exam.Modality,
             })
             .ToListAsync();
 

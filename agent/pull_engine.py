@@ -8,7 +8,6 @@ Follows the same start/stop/worker pattern as uploader.py.
 """
 
 import os
-import json
 import asyncio
 import logging
 import tempfile
@@ -198,7 +197,10 @@ class PullEngine:
     def _cstore(self, dcm_path: str, ae_title: str, host: str, port: int) -> bool:
         """Synchronous C-STORE SCU — called via run_in_executor."""
         try:
-            ds = dcmread(dcm_path)
+            # force=True: blobs are stored without the 128-byte Part 10 preamble
+            # since pynetdicom's C-STORE doesn't transmit it and the agent saves
+            # with write_like_original=True
+            ds = dcmread(dcm_path, force=True)
             ae = AE(ae_title=self.ae_title)
             ae.add_requested_context(ds.SOPClassUID, ds.file_meta.TransferSyntaxUID)
 
