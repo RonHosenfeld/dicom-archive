@@ -32,12 +32,14 @@ class PullEngine:
         ae_title: str = "ARCHIVE_SCU",
         workers: int = 2,
         poll_interval: int = 2,
+        instance_concurrency: int = 4,
     ):
         self.server_url = server_url.rstrip("/")
         self.api_key = api_key
         self.ae_title = ae_title
         self.workers = workers
         self.poll_interval = poll_interval
+        self.instance_concurrency = instance_concurrency
         self._tasks: list[asyncio.Task] = []
         self._session: aiohttp.ClientSession | None = None
 
@@ -49,8 +51,8 @@ class PullEngine:
         for i in range(self.workers):
             task = asyncio.create_task(self._worker(i), name=f"pull-worker-{i}")
             self._tasks.append(task)
-        logger.info("Pull engine started with %d workers (poll_interval=%ds)",
-                     self.workers, self.poll_interval)
+        logger.info("Pull engine started with %d workers (poll_interval=%ds, instance_concurrency=%d)",
+                     self.workers, self.poll_interval, self.instance_concurrency)
 
     async def stop(self):
         for task in self._tasks:
@@ -110,48 +112,22 @@ class PullEngine:
             logger.error("[W%d] Could not retrieve instance list for study %s", worker_id, study_uid)
             return False
 
-        logger.info("[W%d] Study %s has %d instances to deliver", worker_id, study_uid, len(instances))
+        logger.info("[W%d] Study %s has %d instances to deliver (concurrency=%d)",
+                    worker_id, study_uid, len(instances), self.instance_concurrency)
 
-        # 2. Download and C-STORE each instance
-        success_count = 0
-        for inst in instances:
-            instance_uid = inst.get("instance_uid", "")
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    # Download the .dcm file
-                    tmp_path = await self._download_instance(instance_uid)
-                    if tmp_path is None:
-                        logger.error("[W%d] Download failed for %s (attempt %d/%d)",
-                                     worker_id, instance_uid, attempt, MAX_RETRIES)
-                        await asyncio.sleep(RETRY_DELAY * attempt)
-                        continue
+        # 2. Download and C-STORE instances with bounded concurrency
+        sem = asyncio.Semaphore(self.instance_concurrency)
 
-                    # C-STORE to local destination (blocking call in executor)
-                    loop = asyncio.get_event_loop()
-                    ok = await loop.run_in_executor(
-                        None, self._cstore, tmp_path, dest_ae, dest_host, dest_port
-                    )
+        async def deliver_one(inst: dict) -> bool:
+            async with sem:
+                return await self._deliver_instance(
+                    inst, dest_ae, dest_host, dest_port, worker_id
+                )
 
-                    # Clean up temp file
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-
-                    if ok:
-                        success_count += 1
-                        logger.info("[W%d] C-STORE success: %s → %s@%s:%d",
-                                    worker_id, instance_uid, dest_ae, dest_host, dest_port)
-                        break
-                    else:
-                        logger.error("[W%d] C-STORE failed for %s (attempt %d/%d)",
-                                     worker_id, instance_uid, attempt, MAX_RETRIES)
-                        await asyncio.sleep(RETRY_DELAY * attempt)
-
-                except Exception as e:
-                    logger.exception("[W%d] Error delivering %s (attempt %d/%d): %s",
-                                     worker_id, instance_uid, attempt, MAX_RETRIES, e)
-                    await asyncio.sleep(RETRY_DELAY * attempt)
+        results = await asyncio.gather(
+            *(deliver_one(inst) for inst in instances)
+        )
+        success_count = sum(1 for r in results if r)
 
         # 3. Acknowledge delivery to server
         if success_count == len(instances) and routing_log_id:
@@ -160,6 +136,44 @@ class PullEngine:
         logger.info("[W%d] Study %s: delivered %d/%d instances",
                     worker_id, study_uid, success_count, len(instances))
         return success_count == len(instances)
+
+    async def _deliver_instance(self, inst: dict, dest_ae: str,
+                                dest_host: str, dest_port: int,
+                                worker_id: int) -> bool:
+        instance_uid = inst.get("instance_uid", "")
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                tmp_path = await self._download_instance(instance_uid)
+                if tmp_path is None:
+                    logger.error("[W%d] Download failed for %s (attempt %d/%d)",
+                                 worker_id, instance_uid, attempt, MAX_RETRIES)
+                    await asyncio.sleep(RETRY_DELAY * attempt)
+                    continue
+
+                loop = asyncio.get_event_loop()
+                ok = await loop.run_in_executor(
+                    None, self._cstore, tmp_path, dest_ae, dest_host, dest_port
+                )
+
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+                if ok:
+                    logger.info("[W%d] C-STORE success: %s → %s@%s:%d",
+                                worker_id, instance_uid, dest_ae, dest_host, dest_port)
+                    return True
+                else:
+                    logger.error("[W%d] C-STORE failed for %s (attempt %d/%d)",
+                                 worker_id, instance_uid, attempt, MAX_RETRIES)
+                    await asyncio.sleep(RETRY_DELAY * attempt)
+
+            except Exception as e:
+                logger.exception("[W%d] Error delivering %s (attempt %d/%d): %s",
+                                 worker_id, instance_uid, attempt, MAX_RETRIES, e)
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        return False
 
     async def _get_instances(self, study_uid: str) -> list | None:
         assert self._session

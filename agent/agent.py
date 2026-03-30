@@ -84,6 +84,7 @@ UPLOAD_WORKERS = int(os.getenv("UPLOAD_WORKERS", "4"))
 
 REMOTE_ROUTING_ENABLED = os.getenv("REMOTE_ROUTING_ENABLED", "false").lower() in ("true", "1", "yes")
 PULL_WORKERS = int(os.getenv("PULL_WORKERS", "2"))
+INSTANCE_CONCURRENCY = int(os.getenv("INSTANCE_CONCURRENCY", "4"))
 
 QUARANTINE.mkdir(parents=True, exist_ok=True)
 STAGING_DIR.mkdir(parents=True, exist_ok=True)
@@ -370,6 +371,7 @@ def run():
             api_key=AGENT_API_KEY,
             ae_title=AE_TITLE,
             workers=PULL_WORKERS,
+            instance_concurrency=INSTANCE_CONCURRENCY,
         )
         asyncio.run_coroutine_threadsafe(pull_engine.start(), _event_loop)
         logger.info("Pull engine started (%d workers, polling server)", PULL_WORKERS)

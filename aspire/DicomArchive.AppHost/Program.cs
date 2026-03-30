@@ -64,6 +64,7 @@ for (int i = 1; i <= 3; i++)
         .WithEnvironment("QUARANTINE_PATH",               $"../data/remote-{i.ToString()}-quarantine")
         .WithEnvironment("REMOTE_ROUTING_ENABLED",        "true")
         .WithEnvironment("PULL_WORKERS",                  "2")
+        .WithEnvironment("INSTANCE_CONCURRENCY",         "4")
         .WithEnvironment("SEQ_URL",                       seq.GetEndpoint("http"));
 }
 
