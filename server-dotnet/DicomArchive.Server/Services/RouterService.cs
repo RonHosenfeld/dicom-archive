@@ -300,12 +300,40 @@ public class RouterService(
         await using var db = await dbFactory.CreateDbContextAsync();
 
         var instance = await db.Instances
+            .Include(i => i.Series).ThenInclude(s => s.Exam)
             .FirstOrDefaultAsync(i => i.InstanceUid == instanceUid);
         if (instance is null) return (false, "Instance not found");
 
         var dest = await db.AeDestinations.FindAsync(destinationId);
         if (dest is null) return (false, "Destination not found");
 
+        // Remote destinations: create a remote routing entry for the agent to pick up
+        if (dest.RoutingMode == "remote")
+        {
+            var studyUid = instance.Series?.Exam?.StudyUid ?? "";
+            if (string.IsNullOrEmpty(studyUid))
+                return (false, "Instance has no study UID");
+
+            var instanceCount = await db.Instances
+                .CountAsync(i => i.Series.Exam.StudyUid == studyUid);
+
+            db.RemoteRoutingLog.Add(new RemoteRoutingLogEntry
+            {
+                StudyUid       = studyUid,
+                DestinationId  = destinationId,
+                RemoteAgentAe  = dest.RemoteAgentAe,
+                Status         = "published",
+                InstanceCount  = instanceCount,
+                PublishedAt    = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+
+            logger.LogInformation("Manual remote route: study={StudyUid} → agent={Agent} dest={DestId}",
+                studyUid, dest.RemoteAgentAe, destinationId);
+            return (true, null);
+        }
+
+        // Direct destinations: queue for C-STORE SCU
         var entry = new RoutingLogEntry
         {
             InstanceId    = instance.Id,
@@ -327,6 +355,32 @@ public class RouterService(
     {
         await using var db = await dbFactory.CreateDbContextAsync();
 
+        var dest = await db.AeDestinations.FindAsync(destinationId);
+        if (dest is null) return;
+
+        // Remote destinations: one study-level entry (not per-instance)
+        if (dest.RoutingMode == "remote")
+        {
+            var instanceCount = await db.Instances
+                .CountAsync(i => i.Series.Exam.StudyUid == studyUid);
+
+            db.RemoteRoutingLog.Add(new RemoteRoutingLogEntry
+            {
+                StudyUid       = studyUid,
+                DestinationId  = destinationId,
+                RemoteAgentAe  = dest.RemoteAgentAe,
+                Status         = "published",
+                InstanceCount  = instanceCount,
+                PublishedAt    = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+
+            logger.LogInformation("Manual remote route: study={StudyUid} → agent={Agent} dest={DestId}",
+                studyUid, dest.RemoteAgentAe, destinationId);
+            return;
+        }
+
+        // Direct destinations: route each instance
         var instanceUids = await db.Instances
             .Where(i => i.Series.Exam.StudyUid == studyUid)
             .Select(i => i.InstanceUid)

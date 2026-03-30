@@ -19,7 +19,7 @@ from pynetdicom import AE
 from pynetdicom.sop_class import Verification
 from pydicom import dcmread
 
-logger = logging.getLogger("dicom-agent.pull-engine")
+logger = logging.getLogger("dicom-agent")
 
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
