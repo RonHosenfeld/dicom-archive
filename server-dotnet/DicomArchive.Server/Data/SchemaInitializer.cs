@@ -217,6 +217,24 @@ public static class SchemaInitializer
         CREATE INDEX IF NOT EXISTS idx_routing_log_queue
             ON routing_log(status, attempts, queued_at)
             WHERE status IN ('queued', 'failed') AND attempts < 3;
+
+        -- Foreign key indexes (critical for JOIN and CASCADE performance at scale)
+        CREATE INDEX IF NOT EXISTS idx_exams_patient_id ON exams(patient_id);
+        CREATE INDEX IF NOT EXISTS idx_series_exam_id ON series(exam_id);
+        CREATE INDEX IF NOT EXISTS idx_instances_series_id ON instances(series_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_instance_id ON routing_log(instance_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_destination_id ON routing_log(destination_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_rule_id ON routing_log(rule_id);
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_destination_id ON remote_routing_log(destination_id);
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_rule_id ON remote_routing_log(rule_id);
+
+        -- Query-pattern indexes (columns used in WHERE/ORDER BY)
+        CREATE INDEX IF NOT EXISTS idx_exams_study_date ON exams(study_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_exams_modality ON exams(modality);
+        CREATE INDEX IF NOT EXISTS idx_instances_received_at ON instances(received_at);
+        CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_queued_at ON routing_log(queued_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_study_uid ON remote_routing_log(study_uid);
         """;
 
     public static async Task RunAsync(IServiceProvider services, ILogger logger)
