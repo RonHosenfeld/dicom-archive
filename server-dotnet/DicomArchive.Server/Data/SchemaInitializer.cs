@@ -138,6 +138,69 @@ public static class SchemaInitializer
           END IF;
         END $$;
 
+        -- Non-destructive migration: add routing_mode + remote_agent_ae to ae_destinations
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='ae_destinations' AND column_name='routing_mode'
+          ) THEN
+            ALTER TABLE ae_destinations ADD COLUMN routing_mode TEXT NOT NULL DEFAULT 'direct';
+            ALTER TABLE ae_destinations ADD COLUMN remote_agent_ae TEXT;
+          END IF;
+        END $$;
+
+        -- Non-destructive migration: add service_bus_message_id + study_uid to routing_log
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='routing_log' AND column_name='service_bus_message_id'
+          ) THEN
+            ALTER TABLE routing_log ADD COLUMN service_bus_message_id TEXT;
+            ALTER TABLE routing_log ADD COLUMN study_uid TEXT;
+          END IF;
+        END $$;
+
+        -- Remote routing log (study-level tracking for Service Bus routing)
+        CREATE TABLE IF NOT EXISTS remote_routing_log (
+            id                     SERIAL PRIMARY KEY,
+            study_uid              TEXT NOT NULL,
+            rule_id                INTEGER REFERENCES routing_rules(id) ON DELETE SET NULL,
+            destination_id         INTEGER REFERENCES ae_destinations(id) ON DELETE SET NULL,
+            remote_agent_ae        TEXT,
+            status                 TEXT NOT NULL DEFAULT 'published',
+            service_bus_message_id TEXT,
+            instance_count         INTEGER NOT NULL DEFAULT 0,
+            instances_delivered    INTEGER NOT NULL DEFAULT 0,
+            last_error             TEXT,
+            published_at           TIMESTAMPTZ DEFAULT NOW(),
+            completed_at           TIMESTAMPTZ
+        );
+
+        -- Non-destructive migration: add listen_port column to agents
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='agents' AND column_name='listen_port'
+          ) THEN
+            ALTER TABLE agents ADD COLUMN listen_port INTEGER;
+          END IF;
+        END $$;
+
+        -- Non-destructive migration: add regex pattern columns to routing_rules
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='routing_rules' AND column_name='match_description_pattern'
+          ) THEN
+            ALTER TABLE routing_rules ADD COLUMN match_description_pattern TEXT;
+            ALTER TABLE routing_rules ADD COLUMN match_referring_pattern TEXT;
+          END IF;
+        END $$;
+
         -- Trigram extension + indexes for fast ILIKE searches
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
@@ -149,6 +212,44 @@ public static class SchemaInitializer
             ON exams USING gin (accession gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS idx_exams_description_trgm
             ON exams USING gin (description gin_trgm_ops);
+
+        -- Partial index for routing queue processor queries
+        CREATE INDEX IF NOT EXISTS idx_routing_log_queue
+            ON routing_log(status, attempts, queued_at)
+            WHERE status IN ('queued', 'failed') AND attempts < 3;
+
+        -- Foreign key indexes (critical for JOIN and CASCADE performance at scale)
+        CREATE INDEX IF NOT EXISTS idx_exams_patient_id ON exams(patient_id);
+        CREATE INDEX IF NOT EXISTS idx_series_exam_id ON series(exam_id);
+        CREATE INDEX IF NOT EXISTS idx_instances_series_id ON instances(series_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_instance_id ON routing_log(instance_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_destination_id ON routing_log(destination_id);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_rule_id ON routing_log(rule_id);
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_destination_id ON remote_routing_log(destination_id);
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_rule_id ON remote_routing_log(rule_id);
+
+        -- Query-pattern indexes (columns used in WHERE/ORDER BY)
+        CREATE INDEX IF NOT EXISTS idx_exams_study_date ON exams(study_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_exams_modality ON exams(modality);
+        CREATE INDEX IF NOT EXISTS idx_instances_received_at ON instances(received_at);
+        CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);
+        CREATE INDEX IF NOT EXISTS idx_routing_log_queued_at ON routing_log(queued_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_study_uid ON remote_routing_log(study_uid);
+
+        -- Non-destructive migration: add claimed_at column to remote_routing_log
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='remote_routing_log' AND column_name='claimed_at'
+          ) THEN
+            ALTER TABLE remote_routing_log ADD COLUMN claimed_at TIMESTAMPTZ;
+          END IF;
+        END $$;
+
+        -- Partial index for pending remote routes (used by polling endpoint)
+        CREATE INDEX IF NOT EXISTS idx_remote_routing_log_pending
+            ON remote_routing_log(remote_agent_ae) WHERE status IN ('published', 'claimed');
         """;
 
     public static async Task RunAsync(IServiceProvider services, ILogger logger)

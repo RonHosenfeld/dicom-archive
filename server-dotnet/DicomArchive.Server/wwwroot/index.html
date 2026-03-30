@@ -112,6 +112,18 @@
 
     /* Status dot */
     .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+    /* Tail viewer */
+    .tail-container { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 20px; }
+    .tail-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap; }
+    .tail-header-left { display: flex; align-items: center; gap: 10px; }
+    .tail-header-right { display: flex; align-items: center; gap: 8px; }
+    .tail-body { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; padding: 8px 0; }
+    .tail-entry { padding: 3px 18px; border-bottom: 1px solid rgba(37,45,69,0.4); }
+    .tail-entry:hover { background: rgba(79,142,247,0.04); }
+    .tail-entry .ts { color: var(--muted); margin-right: 12px; }
+    .tail-entry .mod { color: var(--accent2); margin-right: 8px; font-weight: 600; }
+    .tail-empty { padding: 24px; text-align: center; color: var(--muted); font-style: italic; }
     .status-dot.green  { background: var(--green); }
     .status-dot.red    { background: var(--red); }
     .status-dot.amber  { background: var(--amber); }
@@ -144,6 +156,33 @@
     .mb-4 { margin-bottom: 16px; }
     .mt-2 { margin-top: 8px; }
     .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+
+    /* DICOM Header Viewer */
+    .header-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .header-toolbar input { max-width: 260px; font-size: 13px; }
+    .header-toolbar select { max-width: 320px; font-size: 13px; }
+    .header-section-title { font-size: 12px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 14px 6px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+    .tag-row-depth { padding-left: calc(14px + var(--depth, 0) * 20px); }
+    .seq-item-sep td { padding: 4px 14px; font-size: 11px; color: var(--accent2); background: rgba(167,139,250,0.06); font-weight: 600; }
+    .tag-kw { color: var(--accent); }
+    .tag-vr { color: var(--muted); font-size: 11px; }
+    .tag-val { word-break: break-all; max-width: 500px; }
+
+    /* Bar charts */
+    .bar-chart { margin: 16px 0 28px; }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+    .bar-label { width: 72px; font-size: 11px; color: var(--muted); text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .bar-track { flex: 1; height: 18px; background: var(--surface2); border-radius: 4px; overflow: hidden; display: flex; }
+    .bar-fill { height: 100%; border-radius: 4px 0 0 4px; transition: width 0.3s; min-width: 1px; }
+    .bar-fill:last-child { border-radius: 0 4px 4px 0; }
+    .bar-fill:only-child { border-radius: 4px; }
+    .bar-fill.accent { background: var(--accent); }
+    .bar-fill.green  { background: var(--green); }
+    .bar-fill.red    { background: var(--red); }
+    .bar-fill.amber  { background: var(--amber); }
+    .bar-value { width: 90px; font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; }
+    .metrics-section { margin-bottom: 28px; }
+    .metrics-section-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -160,6 +199,9 @@
     <div class="nav-item" data-page="destinations"><span class="icon">📡</span> Destinations</div>
     <div class="nav-item" data-page="rules"><span class="icon">⚙️</span> Rules</div>
     <div class="nav-item" data-page="routelog"><span class="icon">📜</span> Route Log</div>
+    <div class="nav-section" style="margin-top:8px">System</div>
+    <div class="nav-item" data-page="metrics"><span class="icon">📈</span> Metrics</div>
+    <div class="nav-item" data-page="testpacs"><span class="icon">🧪</span> Test PACS</div>
   </aside>
 
   <!-- Main -->
@@ -193,7 +235,7 @@
       <div id="agentWarnings"></div>
       <div class="table-wrap no-hover" id="agentsTableWrap">
         <table>
-          <thead><tr><th>Status</th><th>AE Title</th><th>Host</th><th>Storage</th><th>Images Received</th><th>First Seen</th><th>Last Seen</th><th>Rules</th><th></th></tr></thead>
+          <thead><tr><th>Status</th><th>AE Title</th><th>Host</th><th>Port</th><th>Storage</th><th>Images Received</th><th>First Seen</th><th>Last Seen</th><th>Rules</th><th></th></tr></thead>
           <tbody id="agentsTable"></tbody>
         </table>
       </div>
@@ -212,7 +254,7 @@
       </div>
       <div class="table-wrap no-hover">
         <table>
-          <thead><tr><th>Name</th><th>AE Title</th><th>Host</th><th>Port</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>AE Title</th><th>Host</th><th>Port</th><th>Mode</th><th>Status</th><th></th></tr></thead>
           <tbody id="destTable"></tbody>
         </table>
       </div>
@@ -238,15 +280,77 @@
     <div id="page-routelog" class="hidden">
       <div class="page-header">
         <div class="page-title">Route Log</div>
-        <button class="btn btn-secondary" onclick="loadRouteLog()">↻ Refresh</button>
+        <div class="flex gap-2">
+          <button class="btn btn-red hidden" id="resendAllBtn" onclick="resendAllFailed()">↻ Resend All Failed</button>
+          <button class="btn btn-secondary" onclick="loadRouteLog()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="search-bar mb-4">
+        <input type="text" id="rlSearch" placeholder="Instance UID, destination, rule, error…" style="max-width:280px">
+        <select id="rlStatus" style="max-width:140px">
+          <option value="">All statuses</option>
+          <option value="queued">Queued</option>
+          <option value="sending">Sending</option>
+          <option value="success">Success</option>
+          <option value="failed">Failed</option>
+          <option value="published">Published</option>
+          <option value="claimed">Claimed</option>
+          <option value="delivered">Delivered</option>
+        </select>
+        <select id="rlDest" style="max-width:160px">
+          <option value="">All destinations</option>
+        </select>
+        <input type="date" id="rlFrom" style="max-width:150px">
+        <input type="date" id="rlTo"   style="max-width:150px">
+        <button class="btn btn-primary" id="rlFilterBtn" onclick="applyRouteLogFilters()">Search</button>
       </div>
       <div class="table-wrap no-hover">
         <table>
-          <thead><tr><th>Time</th><th>Instance</th><th>Destination</th><th>Rule</th><th>Status</th><th>Attempts</th><th>Error</th></tr></thead>
+          <thead><tr><th>Time</th><th>Mode</th><th>Study / Instance</th><th>Destination</th><th>Rule</th><th>Status</th><th>Attempts</th><th>Error</th><th></th></tr></thead>
           <tbody id="routeLogTable"></tbody>
         </table>
       </div>
       <div class="empty hidden" id="routeLogEmpty"><div class="icon">📜</div><p>No routing activity yet</p></div>
+    </div>
+
+    <!-- ── Metrics ── -->
+    <div id="page-metrics" class="hidden">
+      <div class="page-header">
+        <div class="page-title">System Metrics</div>
+        <div class="flex gap-2 items-center">
+          <select id="metricsRange" style="width:auto;font-size:13px;padding:6px 28px 6px 10px" onchange="loadMetrics()">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadMetrics()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="stat-grid" id="metricsStats"></div>
+      <div class="metrics-section">
+        <div class="metrics-section-title">Ingest Throughput</div>
+        <div id="chartIngest"></div>
+      </div>
+      <div class="metrics-section">
+        <div class="metrics-section-title">Archive Growth</div>
+        <div id="chartStorage"></div>
+      </div>
+      <div class="metrics-section">
+        <div class="metrics-section-title">Routing Outcomes</div>
+        <div id="chartRouting"></div>
+      </div>
+    </div>
+
+    <!-- ── Test PACS ── -->
+    <div id="page-testpacs" class="hidden">
+      <div class="page-header">
+        <div class="page-title">Test PACS Live Tail</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="form-check" style="margin:0"><input type="checkbox" id="testpacsAutoRefresh" checked> <span style="font-size:13px">Auto-refresh</span></label>
+          <button class="btn btn-secondary" onclick="loadTestPacs()">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="testpacsContent"></div>
     </div>
 
   </main>
@@ -305,6 +409,23 @@
       <label>Description</label>
       <input type="text" id="destDesc" placeholder="Optional notes">
     </div>
+    <div class="form-group">
+      <label>Routing Mode</label>
+      <select id="destRoutingMode" onchange="toggleRemoteFields()">
+        <option value="direct">Direct (C-STORE SCU from server)</option>
+        <option value="remote">Remote (via agent polling)</option>
+      </select>
+      <div class="form-hint">Direct: server sends directly via DICOM. Remote: a remote agent polls for and delivers studies.</div>
+    </div>
+    <div id="remoteFields" class="hidden">
+      <div class="form-group">
+        <label>Remote Agent AE *</label>
+        <select id="destRemoteAgentAE">
+          <option value="">Select agent...</option>
+        </select>
+        <div class="form-hint">The remote agent that will pull and C-STORE the images to this destination's AE/host/port.</div>
+      </div>
+    </div>
     <div class="form-check">
       <label class="toggle"><input type="checkbox" id="destEnabled" checked><span class="toggle-slider"></span></label>
       <span style="font-size:13px">Enabled</span>
@@ -362,6 +483,18 @@
         <div class="form-group" style="margin:0">
           <label>Body Part</label>
           <input type="text" id="ruleBodyPart" placeholder="BREAST" style="text-transform:uppercase">
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:12px">
+        <div class="form-group" style="margin:0">
+          <label>Study Description Pattern <span class="text-muted" style="font-weight:400;text-transform:none">(regex)</span></label>
+          <input type="text" id="ruleDescPattern" placeholder="e.g. MAMMO|BREAST">
+          <div class="form-hint">Regex matched against study description (case-insensitive)</div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Referring Physician Pattern <span class="text-muted" style="font-weight:400;text-transform:none">(regex)</span></label>
+          <input type="text" id="ruleReferringPattern" placeholder="e.g. SMITH|JONES">
+          <div class="form-hint">Regex matched against referring physician name (case-insensitive)</div>
         </div>
       </div>
     </div>
@@ -435,6 +568,7 @@ document.querySelectorAll('.nav-item').forEach(el =>
 );
 
 function showPage(page) {
+  stopTestPacsTails();
   state.page = page;
   document.querySelectorAll('.nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.page === page)
@@ -448,6 +582,8 @@ function showPage(page) {
     destinations: loadDestinations,
     rules:        loadRules,
     routelog:     loadRouteLog,
+    metrics:      loadMetrics,
+    testpacs:     loadTestPacs,
   };
   loaders[page]?.();
 }
@@ -497,16 +633,28 @@ async function loadDashboard() {
       <div class="stat-value" style="font-size:22px">${size}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Routes Success</div>
+      <div class="stat-label">Direct Success</div>
       <div class="stat-value text-green">${stats.routes_ok}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Routes Failed</div>
+      <div class="stat-label">Direct Failed</div>
       <div class="stat-value ${stats.routes_failed>0?'text-red':''}">${stats.routes_failed}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Routes Queued</div>
+      <div class="stat-label">Direct Queued</div>
       <div class="stat-value">${stats.routes_queued}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remote Published</div>
+      <div class="stat-value">${stats.remote_published}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remote Claimed</div>
+      <div class="stat-value">${stats.remote_claimed}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remote Delivered</div>
+      <div class="stat-value text-green">${stats.remote_delivered}</div>
     </div>
   `;
 
@@ -515,17 +663,24 @@ async function loadDashboard() {
       <div style="font-size:13px;font-weight:600;margin-bottom:12px">Recent Routing Activity</div>
       <div class="table-wrap no-hover" style="font-size:12px">
         <table>
-          <thead><tr><th>Time</th><th>Instance</th><th>Destination</th><th>Status</th></tr></thead>
+          <thead><tr><th>Time</th><th>Mode</th><th>Study / Instance</th><th>Destination</th><th>Status</th></tr></thead>
           <tbody>
           ${log.length === 0
-            ? `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">No activity yet</td></tr>`
-            : log.map(r => `
+            ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">No activity yet</td></tr>`
+            : log.map(r => {
+                const uid = r.mode === 'remote'
+                  ? (r.study_uid?.slice(-12)||'—')
+                  : (r.instance_uid?.slice(-12)||'—');
+                const fullUid = r.mode === 'remote' ? r.study_uid : r.instance_uid;
+                return `
               <tr>
                 <td class="font-mono">${fmtTime(r.queued_at)}</td>
-                <td class="font-mono truncate" style="max-width:140px" title="${r.instance_uid}">${r.instance_uid?.slice(-12)||'—'}</td>
+                <td>${r.mode === 'remote' ? '<span class="badge badge-purple">Remote</span>' : '<span class="badge badge-blue">Direct</span>'}</td>
+                <td class="font-mono truncate" style="max-width:140px" title="${fullUid||''}">${uid}</td>
                 <td>${r.destination_name||'—'}</td>
                 <td>${statusBadge(r.status)}</td>
-              </tr>`).join('')
+              </tr>`;
+              }).join('')
           }
           </tbody>
         </table>
@@ -637,12 +792,16 @@ async function openStudy(studyUid, patientLabel, studyDate) {
   const series = await api('GET', `/studies/${studyUid}/series`);
   state.studyBreadcrumb = [
     { label: 'Studies', fn: () => { state.studyBreadcrumb=[]; renderBreadcrumb(); renderStudyList(); } },
-    { label: `${patientLabel} ${studyDate}`, fn: null },
+    { label: `${patientLabel} ${studyDate}`, fn: () => openStudy(studyUid, patientLabel, studyDate) },
   ];
   renderBreadcrumb();
 
+  _headerStudyContext = { studyUid, patientLabel, studyDate, series };
   const view = document.getElementById('studiesView');
   view.innerHTML = `
+    <div style="margin-bottom:12px">
+      <button class="btn btn-secondary btn-sm" onclick="openStudyHeader('${studyUid}')">🏷 View DICOM Header</button>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>#</th><th>Description</th><th>Body Part</th><th>Laterality</th><th>View</th><th>Images</th><th></th></tr></thead>
@@ -664,12 +823,20 @@ async function openStudy(studyUid, patientLabel, studyDate) {
 
 async function openSeries(seriesUid, seriesLabel) {
   const instances = await api('GET', `/series/${seriesUid}/instances`);
+  _headerSeriesContext = { seriesUid, seriesLabel, instances };
   const last = state.studyBreadcrumb[state.studyBreadcrumb.length - 1];
-  state.studyBreadcrumb.push({ label: seriesLabel || 'Series', fn: null });
+  // If re-entering from breadcrumb, the last item is already this series; otherwise push
+  const lastItem = state.studyBreadcrumb[state.studyBreadcrumb.length - 1];
+  if (!lastItem || lastItem._seriesUid !== seriesUid) {
+    state.studyBreadcrumb.push({ label: seriesLabel || 'Series', fn: () => openSeries(seriesUid, seriesLabel), _seriesUid: seriesUid });
+  }
   renderBreadcrumb();
 
   const view = document.getElementById('studiesView');
   view.innerHTML = `
+    <div style="margin-bottom:12px">
+      <button class="btn btn-secondary btn-sm" onclick="openSeriesHeader('${seriesUid}')">🏷 View DICOM Header</button>
+    </div>
     <div class="table-wrap no-hover">
       <table>
         <thead><tr><th>#</th><th>Instance UID</th><th>Size</th><th>Transfer Syntax</th><th>Rows × Cols</th><th>SHA-256</th><th></th></tr></thead>
@@ -684,6 +851,7 @@ async function openSeries(seriesUid, seriesLabel) {
             <td class="font-mono" style="font-size:10px" title="${i.sha256}">${i.sha256?.slice(0,12)+'…' || '—'}</td>
             <td>
               <div class="flex gap-2">
+                <button class="btn btn-sm btn-secondary" onclick="openInstanceHeader('${i.instance_uid}')" title="View DICOM tags">🏷</button>
                 <a href="/api/instances/${i.instance_uid}/file" download class="btn btn-sm btn-secondary">⬇ DCM</a>
                 <select class="route-select" id="rsel_i_${i.instance_uid}">
                   <option value="">Route…</option>
@@ -704,6 +872,191 @@ async function routeInstanceFromRow(instanceUid) {
   if (!destId) return toast('Select a destination first', 'error');
   await api('POST', `/route/instance/${instanceUid}/to/${destId}`);
   toast(`Routing queued → ${state.destinations.find(d=>d.id==destId)?.name}`);
+}
+
+// ── DICOM Header Viewer ───────────────────────────────────────────────────────
+let _headerStudyContext = null;
+let _headerSeriesContext = null;
+let _headerState = { data: null, instanceUid: null, instances: [], mode: null };
+
+async function openStudyHeader(studyUid) {
+  const ctx = _headerStudyContext;
+  if (!ctx) { toast('No study context available', 'error'); return; }
+  // Show loading state immediately
+  const view = document.getElementById('studiesView');
+  view.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">Loading instances for header view…</div>';
+  try {
+    // Build instance list grouped by series
+    const instances = [];
+    const fetches = await Promise.all(ctx.series.map(s => api('GET', `/series/${s.series_uid}/instances`).then(insts => ({ series: s, insts }))));
+    for (const { series: s, insts } of fetches) {
+      for (const inst of insts) {
+        instances.push({ ...inst, seriesDesc: s.description || `Series ${s.series_number ?? '?'}` });
+      }
+    }
+    if (!instances.length) { toast('No instances found in this study', 'error'); openStudy(ctx.studyUid, ctx.patientLabel, ctx.studyDate); return; }
+    _headerState.instances = instances;
+    _headerState.mode = 'study';
+    state.studyBreadcrumb.push({ label: 'DICOM Header', fn: null });
+    renderBreadcrumb();
+    await loadAndRenderHeader(instances[0].instance_uid);
+  } catch (e) {
+    toast('Failed to load study header: ' + e.message, 'error');
+    openStudy(ctx.studyUid, ctx.patientLabel, ctx.studyDate);
+  }
+}
+
+async function openSeriesHeader(seriesUid) {
+  const ctx = _headerSeriesContext;
+  if (!ctx || !ctx.instances.length) return toast('No instances found', 'error');
+  _headerState.instances = ctx.instances.map(i => ({ ...i, seriesDesc: ctx.seriesLabel || 'Series' }));
+  _headerState.mode = 'series';
+  state.studyBreadcrumb.push({ label: 'DICOM Header', fn: null });
+  renderBreadcrumb();
+  await loadAndRenderHeader(ctx.instances[0].instance_uid);
+}
+
+async function openInstanceHeader(instanceUid) {
+  _headerState.instances = [];
+  _headerState.mode = 'instance';
+  state.studyBreadcrumb.push({ label: 'DICOM Header', fn: null });
+  renderBreadcrumb();
+  await loadAndRenderHeader(instanceUid);
+}
+
+async function loadAndRenderHeader(instanceUid) {
+  const view = document.getElementById('studiesView');
+  view.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">Loading DICOM header…</div>';
+  try {
+    const data = await api('GET', `/instances/${instanceUid}/dicom-header`);
+    _headerState.data = data;
+    _headerState.instanceUid = instanceUid;
+    renderHeaderView();
+  } catch (e) {
+    view.innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">Failed to load header: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderHeaderView() {
+  const { data, instanceUid, instances, mode } = _headerState;
+  const view = document.getElementById('studiesView');
+
+  // Navigator dropdown (only for study/series mode with multiple instances)
+  let navigatorHtml = '';
+  if (instances.length > 1) {
+    navigatorHtml = `<select class="header-toolbar" style="max-width:400px" onchange="switchHeaderInstance(this.value)">
+      ${instances.map(inst => {
+        const label = `${inst.seriesDesc || ''} — #${inst.instance_number ?? '?'} (${inst.instance_uid.slice(inst.instance_uid.lastIndexOf('.')+1)})`;
+        return `<option value="${inst.instance_uid}" ${inst.instance_uid === instanceUid ? 'selected' : ''}>${esc(label)}</option>`;
+      }).join('')}
+    </select>`;
+  }
+
+  const metaRows = data.meta.map(t => renderTagRow(t, 0)).join('');
+  const datasetRows = data.dataset.map(t => renderTagRow(t, 0)).join('');
+
+  view.innerHTML = `
+    <div class="header-toolbar">
+      ${navigatorHtml}
+      <input type="text" id="headerSearch" placeholder="Search tags (keyword, tag, value)…" oninput="filterHeaderTags()">
+      <div class="ml-auto flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="copyHeaderToClipboard()">📋 Copy</button>
+        <button class="btn btn-sm btn-secondary" onclick="exportHeaderAsFile()">💾 Export</button>
+      </div>
+    </div>
+    <div class="table-wrap no-hover">
+      <div class="header-section-title">File Meta Information</div>
+      <table>
+        <thead><tr><th style="width:120px">Tag</th><th style="width:40px">VR</th><th style="width:200px">Keyword</th><th>Value</th></tr></thead>
+        <tbody id="headerMetaBody">${metaRows}</tbody>
+      </table>
+    </div>
+    <div class="table-wrap no-hover" style="margin-top:12px">
+      <div class="header-section-title">Dataset</div>
+      <table>
+        <thead><tr><th style="width:120px">Tag</th><th style="width:40px">VR</th><th style="width:200px">Keyword</th><th>Value</th></tr></thead>
+        <tbody id="headerDatasetBody">${datasetRows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderTagRow(tag, depth) {
+  const indent = depth * 20;
+  let html = `<tr class="header-tag-row" data-keyword="${esc(tag.keyword)}" data-tag="${esc(tag.tag)}" data-value="${esc(tag.value)}">
+    <td class="font-mono" style="padding-left:${14 + indent}px">${esc(tag.tag)}</td>
+    <td class="font-mono tag-vr">${esc(tag.vr)}</td>
+    <td class="tag-kw" style="padding-left:${14 + indent}px">${esc(tag.keyword)}</td>
+    <td class="tag-val font-mono">${esc(tag.value)}</td>
+  </tr>`;
+  if (tag.items && tag.items.length) {
+    tag.items.forEach((itemTags, idx) => {
+      html += `<tr class="seq-item-sep header-tag-row" data-keyword="${esc(tag.keyword)}" data-tag="${esc(tag.tag)}" data-value="">
+        <td colspan="4" style="padding-left:${14 + (depth+1)*20}px">Item ${idx + 1}</td>
+      </tr>`;
+      itemTags.forEach(t => { html += renderTagRow(t, depth + 2); });
+    });
+  }
+  return html;
+}
+
+function filterHeaderTags() {
+  const q = (document.getElementById('headerSearch')?.value || '').toLowerCase();
+  document.querySelectorAll('.header-tag-row').forEach(row => {
+    if (!q) { row.style.display = ''; return; }
+    const kw = (row.dataset.keyword || '').toLowerCase();
+    const tag = (row.dataset.tag || '').toLowerCase();
+    const val = (row.dataset.value || '').toLowerCase();
+    row.style.display = (kw.includes(q) || tag.includes(q) || val.includes(q)) ? '' : 'none';
+  });
+}
+
+async function switchHeaderInstance(uid) {
+  await loadAndRenderHeader(uid);
+}
+
+function buildHeaderText() {
+  const { data } = _headerState;
+  if (!data) return '';
+  let text = `DICOM Header — Instance: ${_headerState.instanceUid}\n`;
+  text += '='.repeat(70) + '\n\n';
+  text += '── File Meta Information ──\n';
+  text += formatTagsAsText(data.meta, 0);
+  text += '\n── Dataset ──\n';
+  text += formatTagsAsText(data.dataset, 0);
+  return text;
+}
+
+function formatTagsAsText(tags, depth) {
+  let text = '';
+  const pad = '  '.repeat(depth);
+  for (const t of tags) {
+    text += `${pad}${t.tag} ${t.vr} ${t.keyword} = ${t.value}\n`;
+    if (t.items && t.items.length) {
+      t.items.forEach((itemTags, idx) => {
+        text += `${pad}  --- Item ${idx + 1} ---\n`;
+        text += formatTagsAsText(itemTags, depth + 2);
+      });
+    }
+  }
+  return text;
+}
+
+function copyHeaderToClipboard() {
+  const text = buildHeaderText();
+  navigator.clipboard.writeText(text).then(
+    () => toast('Header copied to clipboard'),
+    () => toast('Failed to copy', 'error')
+  );
+}
+
+function exportHeaderAsFile() {
+  const text = buildHeaderText();
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `dicom-header-${_headerState.instanceUid || 'unknown'}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function renderBreadcrumb() {
@@ -772,6 +1125,7 @@ async function loadAgents() {
         ${a.description ? `<div class="text-muted" style="font-size:11px">${esc(a.description)}</div>` : ''}
       </td>
       <td class="font-mono text-muted">${a.host || '—'}</td>
+      <td class="font-mono text-muted">${a.listen_port ?? '—'}</td>
       <td>${a.storage_backend ? `<span class="badge badge-muted">${a.storage_backend}</span>` : '—'}</td>
       <td class="font-mono">${(a.instances_received||0).toLocaleString()}</td>
       <td class="text-muted" style="font-size:12px">${fmtTime(a.first_seen)}</td>
@@ -846,6 +1200,11 @@ async function loadDestinations() {
       <td class="font-mono">${d.host}</td>
       <td class="font-mono">${d.port}</td>
       <td>
+        ${d.routing_mode === 'remote'
+          ? `<span class="badge badge-purple">Remote</span>${d.remote_agent_ae ? `<div class="text-muted" style="font-size:11px;margin-top:2px">Agent: ${esc(d.remote_agent_ae)}</div>` : ''}`
+          : '<span class="badge badge-blue">Direct</span>'}
+      </td>
+      <td>
         <div class="flex items-center gap-2">
           <div class="status-dot ${d.enabled?'green':'muted'}"></div>
           ${d.enabled?'Enabled':'Disabled'}
@@ -853,7 +1212,7 @@ async function loadDestinations() {
       </td>
       <td>
         <div class="flex gap-2">
-          <button class="btn btn-sm btn-secondary" onclick="echoDestById(${d.id},'${esc(d.name)}')">🔔 Echo</button>
+          ${d.routing_mode !== 'remote' ? `<button class="btn btn-sm btn-secondary" onclick="echoDestById(${d.id},'${esc(d.name)}')">🔔 Echo</button>` : ''}
           <button class="btn-icon" onclick="openDestModal(${d.id})">✏️</button>
           <button class="btn-icon" onclick="deleteDest(${d.id},'${esc(d.name)}')">🗑</button>
         </div>
@@ -861,9 +1220,34 @@ async function loadDestinations() {
     </tr>`).join('');
 }
 
+function toggleRemoteFields() {
+  const mode = document.getElementById('destRoutingMode').value;
+  document.getElementById('remoteFields').classList.toggle('hidden', mode !== 'remote');
+}
+
+function populateRemoteAgentDropdown(selectedAE = '') {
+  const sel = document.getElementById('destRemoteAgentAE');
+  sel.innerHTML = '<option value="">Select agent...</option>';
+  state.agents.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.ae_title;
+    opt.textContent = `${a.ae_title}${a.description ? ' — ' + a.description : ''}`;
+    if (a.ae_title === selectedAE) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (selectedAE && !state.agents.find(a => a.ae_title === selectedAE)) {
+    const opt = document.createElement('option');
+    opt.value = selectedAE;
+    opt.textContent = `${selectedAE} (not registered)`;
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
 function openDestModal(id = null) {
   state.editingDest = id;
   document.getElementById('destModalTitle').textContent = id ? 'Edit Destination' : 'New Destination';
+  populateRemoteAgentDropdown(id ? (state.destinations.find(x => x.id === id)?.remote_agent_ae || '') : '');
   if (id) {
     const d = state.destinations.find(x => x.id === id);
     document.getElementById('destName').value    = d.name;
@@ -872,24 +1256,32 @@ function openDestModal(id = null) {
     document.getElementById('destPort').value    = d.port;
     document.getElementById('destDesc').value    = d.description || '';
     document.getElementById('destEnabled').checked = d.enabled;
+    document.getElementById('destRoutingMode').value = d.routing_mode || 'direct';
+    toggleRemoteFields();
   } else {
     ['destName','destAE','destHost','destDesc'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('destPort').value = '104';
     document.getElementById('destEnabled').checked = true;
+    document.getElementById('destRoutingMode').value = 'direct';
+    toggleRemoteFields();
   }
   openModal('destModal');
 }
 
 async function saveDest() {
+  const routingMode = document.getElementById('destRoutingMode').value;
   const body = {
-    name:        document.getElementById('destName').value.trim(),
-    ae_title:    document.getElementById('destAE').value.trim().toUpperCase(),
-    host:        document.getElementById('destHost').value.trim(),
-    port:        parseInt(document.getElementById('destPort').value),
-    description: document.getElementById('destDesc').value.trim() || null,
-    enabled:     document.getElementById('destEnabled').checked,
+    name:            document.getElementById('destName').value.trim(),
+    ae_title:        document.getElementById('destAE').value.trim().toUpperCase(),
+    host:            document.getElementById('destHost').value.trim(),
+    port:            parseInt(document.getElementById('destPort').value),
+    description:     document.getElementById('destDesc').value.trim() || null,
+    enabled:         document.getElementById('destEnabled').checked,
+    routing_mode:    routingMode,
+    remote_agent_ae: routingMode === 'remote' ? (document.getElementById('destRemoteAgentAE').value || null) : null,
   };
   if (!body.name || !body.ae_title || !body.host) return toast('Name, AE Title and Host are required', 'error');
+  if (routingMode === 'remote' && !body.remote_agent_ae) return toast('Remote Agent AE is required for remote destinations', 'error');
   try {
     if (state.editingDest) {
       await api('PUT', `/destinations/${state.editingDest}`, body);
@@ -937,10 +1329,12 @@ async function loadRules() {
 
   tbody.innerHTML = state.rules.map(r => {
     const chips = [];
-    if (r.match_modality)     chips.push(`Modality: ${r.match_modality}`);
-    if (r.match_ae_title)     chips.push(`From: ${r.match_ae_title}`);
-    if (r.match_receiving_ae) chips.push(`Via: ${r.match_receiving_ae}`);
-    if (r.match_body_part)    chips.push(`Body: ${r.match_body_part}`);
+    if (r.match_modality)             chips.push(`Modality: ${r.match_modality}`);
+    if (r.match_ae_title)             chips.push(`From: ${r.match_ae_title}`);
+    if (r.match_receiving_ae)         chips.push(`Via: ${r.match_receiving_ae}`);
+    if (r.match_body_part)            chips.push(`Body: ${r.match_body_part}`);
+    if (r.match_description_pattern)  chips.push(`Desc: /${r.match_description_pattern}/`);
+    if (r.match_referring_pattern)    chips.push(`Ref: /${r.match_referring_pattern}/`);
 
     // destinations is a JSON array from the DB aggregation
     const dests = typeof r.destinations === 'string' ? JSON.parse(r.destinations) : (r.destinations || []);
@@ -1050,18 +1444,20 @@ function openRuleModal(id = null) {
     const dests = typeof r.destinations === 'string' ? JSON.parse(r.destinations) : (r.destinations || []);
     const selectedIds = dests.map(d => d.id);
     renderRuleDestList(selectedIds);
-    document.getElementById('ruleName').value        = r.name;
-    document.getElementById('rulePriority').value    = r.priority;
-    document.getElementById('ruleModality').value    = r.match_modality || '';
-    document.getElementById('ruleAE').value          = r.match_ae_title || '';
-    document.getElementById('ruleBodyPart').value    = r.match_body_part || '';
-    document.getElementById('ruleOnReceive').checked = r.on_receive;
-    document.getElementById('ruleEnabled').checked   = r.enabled;
-    document.getElementById('ruleDesc').value        = r.description || '';
+    document.getElementById('ruleName').value             = r.name;
+    document.getElementById('rulePriority').value         = r.priority;
+    document.getElementById('ruleModality').value         = r.match_modality || '';
+    document.getElementById('ruleAE').value               = r.match_ae_title || '';
+    document.getElementById('ruleBodyPart').value         = r.match_body_part || '';
+    document.getElementById('ruleDescPattern').value      = r.match_description_pattern || '';
+    document.getElementById('ruleReferringPattern').value = r.match_referring_pattern || '';
+    document.getElementById('ruleOnReceive').checked      = r.on_receive;
+    document.getElementById('ruleEnabled').checked        = r.enabled;
+    document.getElementById('ruleDesc').value             = r.description || '';
     populateAgentDropdown(r.match_receiving_ae || '');
   } else {
     renderRuleDestList([]);
-    ['ruleName','ruleModality','ruleAE','ruleBodyPart','ruleDesc'].forEach(i => document.getElementById(i).value = '');
+    ['ruleName','ruleModality','ruleAE','ruleBodyPart','ruleDesc','ruleDescPattern','ruleReferringPattern'].forEach(i => document.getElementById(i).value = '');
     populateAgentDropdown('');
     document.getElementById('rulePriority').value    = '100';
     document.getElementById('ruleOnReceive').checked = false;
@@ -1078,10 +1474,12 @@ async function saveRule() {
     destination_ids: destIds,
     priority:        parseInt(document.getElementById('rulePriority').value),
     enabled:         document.getElementById('ruleEnabled').checked,
-    match_modality:      document.getElementById('ruleModality').value.trim().toUpperCase() || null,
-    match_ae_title:      document.getElementById('ruleAE').value.trim().toUpperCase() || null,
-    match_receiving_ae:  document.getElementById('ruleReceivingAE').value || null,
-    match_body_part:     document.getElementById('ruleBodyPart').value.trim().toUpperCase() || null,
+    match_modality:             document.getElementById('ruleModality').value.trim().toUpperCase() || null,
+    match_ae_title:             document.getElementById('ruleAE').value.trim().toUpperCase() || null,
+    match_receiving_ae:         document.getElementById('ruleReceivingAE').value || null,
+    match_body_part:            document.getElementById('ruleBodyPart').value.trim().toUpperCase() || null,
+    match_description_pattern:  document.getElementById('ruleDescPattern').value.trim() || null,
+    match_referring_pattern:    document.getElementById('ruleReferringPattern').value.trim() || null,
     on_receive:      document.getElementById('ruleOnReceive').checked,
     description:     document.getElementById('ruleDesc').value.trim() || null,
   };
@@ -1132,25 +1530,91 @@ async function confirmRouteStudy() {
 }
 
 // ── Route Log ─────────────────────────────────────────────────────────────────
-async function loadRouteLog() {
-  const log = await api('GET', '/routing-log?limit=100');
+async function loadRouteLog(filters = {}) {
+  // Populate destination dropdown from state
+  const destSel = document.getElementById('rlDest');
+  if (destSel && destSel.options.length <= 1) {
+    state.destinations.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.name; opt.textContent = d.name;
+      destSel.appendChild(opt);
+    });
+  }
+
+  const params = new URLSearchParams(filters).toString();
+  const log = await api('GET', `/routing-log${params ? '?'+params : '?limit=100'}`);
   const tbody = document.getElementById('routeLogTable');
   const empty = document.getElementById('routeLogEmpty');
   const wrap  = document.querySelector('#page-routelog .table-wrap');
 
-  if (!log.length) { wrap.classList.add('hidden'); empty.classList.remove('hidden'); return; }
-  empty.classList.add('hidden'); wrap.classList.remove('hidden');
+  if (!log.length) { wrap.classList.add('hidden'); empty.classList.remove('hidden'); }
+  else { empty.classList.add('hidden'); wrap.classList.remove('hidden'); }
 
-  tbody.innerHTML = log.map(r => `
-    <tr>
+  // Show/hide resend all failed button
+  const hasF = log.some(r => r.status === 'failed');
+  const raBtn = document.getElementById('resendAllBtn');
+  if (raBtn) raBtn.classList.toggle('hidden', !hasF);
+
+  const hasFilter = Object.values(filters).some(v => v);
+  const btn = document.getElementById('rlFilterBtn');
+  if (btn) btn.textContent = hasFilter ? 'Clear' : 'Search';
+
+  tbody.innerHTML = log.map(r => {
+    const isRemote = r.mode === 'remote';
+    const modeBadge = isRemote
+      ? `<span class="badge badge-purple" style="font-size:10px">Remote</span>`
+      : `<span class="badge badge-blue" style="font-size:10px">Direct</span>`;
+    const identifier = isRemote
+      ? `<span title="${esc(r.study_uid||'')}">${esc((r.study_uid||'—').slice(-12))}${r.remote_agent_ae ? ' → '+esc(r.remote_agent_ae) : ''}</span>`
+      : `<span class="truncate" title="${esc(r.instance_uid||'')}" style="max-width:160px">${esc(r.instance_uid||'—')}</span>`;
+    const resendBtn = (!isRemote && r.status === 'failed') ? `<button class="btn btn-sm btn-amber" onclick="resendRoute(${r.id})">↻</button>` : '';
+    return `<tr>
       <td class="font-mono">${fmtTime(r.queued_at)}</td>
-      <td class="font-mono truncate" title="${r.instance_uid}" style="max-width:160px">${r.instance_uid||'—'}</td>
+      <td>${modeBadge}</td>
+      <td class="font-mono">${identifier}</td>
       <td>${esc(r.destination_name||'—')}</td>
       <td>${esc(r.rule_name||'Manual')}</td>
       <td>${statusBadge(r.status)}</td>
-      <td style="text-align:center">${r.attempts}</td>
-      <td class="text-muted" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${r.last_error||''}">${r.last_error||'—'}</td>
-    </tr>`).join('');
+      <td style="text-align:center">${isRemote ? '—' : r.attempts}</td>
+      <td class="text-muted" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${esc(r.last_error||'')}">${esc(r.last_error||'—')}</td>
+      <td>${resendBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function applyRouteLogFilters() {
+  const btn = document.getElementById('rlFilterBtn');
+  if (btn && btn.textContent === 'Clear') {
+    document.getElementById('rlSearch').value = '';
+    document.getElementById('rlStatus').value = '';
+    document.getElementById('rlDest').value = '';
+    document.getElementById('rlFrom').value = '';
+    document.getElementById('rlTo').value = '';
+    loadRouteLog({});
+    return;
+  }
+  const filters = {
+    search:      document.getElementById('rlSearch')?.value || '',
+    status:      document.getElementById('rlStatus')?.value || '',
+    destination: document.getElementById('rlDest')?.value || '',
+    date_from:   document.getElementById('rlFrom')?.value || '',
+    date_to:     document.getElementById('rlTo')?.value || '',
+  };
+  const hasFilter = Object.values(filters).some(v => v);
+  loadRouteLog(hasFilter ? filters : {});
+}
+
+async function resendRoute(id) {
+  await api('POST', `/routing-log/${id}/resend`);
+  toast('Entry re-queued for delivery');
+  loadRouteLog();
+}
+
+async function resendAllFailed() {
+  if (!confirm('Resend all failed routing entries?')) return;
+  const res = await api('POST', '/routing-log/resend-failed');
+  toast(`${res.count} entries re-queued for delivery`);
+  loadRouteLog();
 }
 
 // ── Modals ────────────────────────────────────────────────────────────────────
@@ -1166,7 +1630,7 @@ function closeModal(e) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function statusBadge(s) {
-  const map = { success:'green', failed:'red', queued:'amber', sending:'blue' };
+  const map = { success:'green', delivered:'green', failed:'red', queued:'amber', sending:'blue', published:'purple', claimed:'amber', publishing:'blue' };
   return `<span class="badge badge-${map[s]||'muted'}">${s||'—'}</span>`;
 }
 function fmtTime(iso) {
@@ -1188,6 +1652,206 @@ function toast(msg, type='success') {
   document.getElementById('toastContainer').appendChild(el);
   setTimeout(() => el.remove(), 4500);
 }
+
+// ── Metrics ──────────────────────────────────────────────────────────────────
+async function loadMetrics() {
+  const days = parseInt(document.getElementById('metricsRange')?.value || '30');
+  const bucket = days <= 7 ? 'hour' : 'day';
+  try {
+    const [summary, ingest, storage, routing] = await Promise.all([
+      api('GET', '/metrics/summary'),
+      api('GET', `/metrics/ingest?days=${days}&bucket=${bucket}`),
+      api('GET', `/metrics/storage?days=${days}&bucket=${bucket}`),
+      api('GET', `/metrics/routing?days=${days}&bucket=${bucket}`),
+    ]);
+    renderMetricsSummary(summary);
+    renderIngestChart(ingest, bucket);
+    renderStorageChart(storage, bucket);
+    renderRoutingChart(routing, bucket);
+  } catch(e) { toast('Failed to load metrics: ' + e.message, 'error'); }
+}
+
+function renderMetricsSummary(s) {
+  document.getElementById('metricsStats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Exams Today</div><div class="stat-value">${s.exams_today}</div></div>
+    <div class="stat-card"><div class="stat-label">Exams 7d</div><div class="stat-value">${s.exams_7d}</div></div>
+    <div class="stat-card"><div class="stat-label">Exams 30d</div><div class="stat-value">${s.exams_30d}</div></div>
+    <div class="stat-card"><div class="stat-label">Instances Today</div><div class="stat-value">${s.instances_today}</div></div>
+    <div class="stat-card"><div class="stat-label">Instances 7d</div><div class="stat-value">${s.instances_7d}</div></div>
+    <div class="stat-card"><div class="stat-label">Instances 30d</div><div class="stat-value">${s.instances_30d}</div></div>
+    <div class="stat-card"><div class="stat-label">Bytes 30d</div><div class="stat-value" style="font-size:22px">${fmtBytes(s.bytes_30d)}</div></div>
+    <div class="stat-card"><div class="stat-label">Routes OK 30d</div><div class="stat-value text-green">${s.routes_ok_30d}</div></div>
+    <div class="stat-card"><div class="stat-label">Routes Failed 30d</div><div class="stat-value ${s.routes_failed_30d>0?'text-red':''}">${s.routes_failed_30d}</div></div>
+  `;
+}
+
+function metricsDateLabel(iso, bucket) {
+  const d = new Date(iso);
+  if (bucket === 'hour') return d.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'numeric'});
+  return d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+
+function renderBarChart(containerId, rows) {
+  const el = document.getElementById(containerId);
+  if (!rows.length) { el.innerHTML = '<div class="empty" style="padding:24px"><p>No data for this period</p></div>'; return; }
+  const maxTotal = Math.max(...rows.map(r => r.segments.reduce((a,s) => a + s.value, 0)), 1);
+  el.innerHTML = '<div class="bar-chart">' + rows.map(r => {
+    const total = r.segments.reduce((a,s) => a + s.value, 0);
+    const fills = r.segments.filter(s => s.value > 0).map(s =>
+      `<div class="bar-fill ${s.cssClass}" style="width:${(s.value/maxTotal*100).toFixed(1)}%" title="${s.label}: ${s.value}"></div>`
+    ).join('');
+    return `<div class="bar-row">
+      <div class="bar-label">${r.label}</div>
+      <div class="bar-track">${fills}</div>
+      <div class="bar-value">${r.valueText || total.toLocaleString()}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderIngestChart(data, bucket) {
+  const rows = data.map(d => ({
+    label: metricsDateLabel(d.period, bucket),
+    segments: [{value: d.instances, cssClass: 'accent', label: 'Instances'}],
+    valueText: `${d.instances} inst / ${d.exams} exams`
+  }));
+  renderBarChart('chartIngest', rows);
+}
+
+function renderStorageChart(data, bucket) {
+  const buckets = data.buckets || [];
+  const rows = buckets.map(d => ({
+    label: metricsDateLabel(d.period, bucket),
+    segments: [{value: d.bytes_added, cssClass: 'accent', label: 'Bytes added'}],
+    valueText: `+${fmtBytes(d.bytes_added)} (${fmtBytes(data.base_bytes + d.cumulative_bytes)} total)`
+  }));
+  renderBarChart('chartStorage', rows);
+}
+
+function renderRoutingChart(data, bucket) {
+  const rows = data.map(d => {
+    const total = d.success + d.failed + d.queued;
+    const latency = d.avg_latency_sec != null ? ` · ${d.avg_latency_sec.toFixed(1)}s avg` : '';
+    return {
+      label: metricsDateLabel(d.period, bucket),
+      segments: [
+        {value: d.success, cssClass: 'green', label: 'Success'},
+        {value: d.failed, cssClass: 'red', label: 'Failed'},
+        {value: d.queued, cssClass: 'amber', label: 'Queued'},
+      ],
+      valueText: `${total}${latency}`
+    };
+  });
+  renderBarChart('chartRouting', rows);
+}
+
+// ── Test PACS ─────────────────────────────────────────────────────────────────
+state.testpacsTimers = {};
+state.testpacsSeqs = {};
+
+async function loadTestPacs() {
+  stopTestPacsTails();
+  const container = document.getElementById('testpacsContent');
+  try {
+    const instances = await api('GET', '/test-pacs');
+    if (!instances.length) {
+      container.innerHTML = '<div class="empty"><div class="icon">🧪</div><p>No test PACS configured</p><p style="font-size:12px;margin-top:8px">Set TEST_PACS_N_URL / TEST_PACS_N_AE environment variables on the server</p></div>';
+      return;
+    }
+    container.innerHTML = instances.map(inst => `
+      <div class="tail-container" id="tp-${inst.name}">
+        <div class="tail-header">
+          <div class="tail-header-left">
+            <span class="status-dot" style="background:${inst.online ? 'var(--green)' : 'var(--red)'}"></span>
+            <strong>${inst.ae_title}</strong>
+            <span class="badge badge-muted">${inst.name}</span>
+            ${inst.dicom_port ? `<span class="badge badge-purple">port ${inst.dicom_port}</span>` : ''}
+            <span class="badge badge-blue">${inst.total_received ?? 0} received</span>
+          </div>
+          <div class="tail-header-right">
+            ${inst.online ? `<button class="btn btn-sm btn-danger" onclick="clearTestPacs('${inst.name}')">Clear</button>` : '<span class="badge badge-red">offline</span>'}
+          </div>
+        </div>
+        <div class="tail-body" id="tp-body-${inst.name}">
+          <div class="tail-empty">Waiting for instances...</div>
+        </div>
+      </div>
+    `).join('');
+
+    // Start polling for online instances
+    for (const inst of instances) {
+      if (inst.online) startTestPacsTail(inst.name);
+    }
+  } catch(e) {
+    container.innerHTML = '<div class="empty"><div class="icon">🧪</div><p>Failed to load test PACS: ' + e.message + '</p></div>';
+  }
+}
+
+function startTestPacsTail(name) {
+  state.testpacsSeqs[name] = state.testpacsSeqs[name] || 0;
+  // Do an immediate fetch
+  fetchTestPacsEntries(name);
+  // Then poll every 2s
+  state.testpacsTimers[name] = setInterval(() => {
+    if (document.hidden) return;
+    const autoRefresh = document.getElementById('testpacsAutoRefresh');
+    if (autoRefresh && !autoRefresh.checked) return;
+    fetchTestPacsEntries(name);
+  }, 2000);
+}
+
+async function fetchTestPacsEntries(name) {
+  try {
+    const seq = state.testpacsSeqs[name] || 0;
+    const entries = await api('GET', `/test-pacs/${name}/received?since_seq=${seq}`);
+    if (!entries.length) return;
+    const body = document.getElementById(`tp-body-${name}`);
+    if (!body) return;
+    // Remove empty placeholder
+    const empty = body.querySelector('.tail-empty');
+    if (empty) empty.remove();
+    // Check if user has scrolled up
+    const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
+    for (const e of entries) {
+      const ts = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
+      const div = document.createElement('div');
+      div.className = 'tail-entry';
+      div.innerHTML = `<span class="ts">${ts}</span><span class="mod">${e.modality}</span>${e.patient_name} (${e.patient_id}) &mdash; Study: ...${(e.study_uid || '').slice(-12)}`;
+      body.appendChild(div);
+      state.testpacsSeqs[name] = Math.max(state.testpacsSeqs[name] || 0, e.seq);
+    }
+    // Update count badge
+    const header = document.querySelector(`#tp-${name} .badge-blue`);
+    if (header) header.textContent = `${state.testpacsSeqs[name]} received`;
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch { /* ignore fetch errors during polling */ }
+}
+
+function stopTestPacsTails() {
+  for (const id of Object.values(state.testpacsTimers)) clearInterval(id);
+  state.testpacsTimers = {};
+}
+
+async function clearTestPacs(name) {
+  try {
+    await api('POST', `/test-pacs/${name}/clear`);
+    state.testpacsSeqs[name] = 0;
+    const body = document.getElementById(`tp-body-${name}`);
+    if (body) body.innerHTML = '<div class="tail-empty">Cleared — waiting for instances...</div>';
+    const header = document.querySelector(`#tp-${name} .badge-blue`);
+    if (header) header.textContent = '0 received';
+    toast('Buffer cleared');
+  } catch(e) { toast('Failed to clear: ' + e.message, 'error'); }
+}
+
+// Pause/resume polling on tab visibility
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && state.page === 'testpacs') {
+    // Resume by fetching immediately for all active timers
+    for (const name of Object.keys(state.testpacsTimers)) {
+      fetchTestPacsEntries(name);
+    }
+  }
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {

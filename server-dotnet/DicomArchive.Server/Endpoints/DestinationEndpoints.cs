@@ -29,14 +29,16 @@ public static class DestinationEndpoints
     {
         var dest = new AeDestination
         {
-            Name        = body.Name,
-            AeTitle     = body.AeTitle.ToUpper(),
-            Host        = body.Host,
-            Port        = body.Port,
-            Description = body.Description,
-            Enabled     = body.Enabled,
-            CreatedAt   = DateTime.UtcNow,
-            UpdatedAt   = DateTime.UtcNow,
+            Name          = body.Name,
+            AeTitle       = body.AeTitle.ToUpper(),
+            Host          = body.Host,
+            Port          = body.Port,
+            Description   = body.Description,
+            Enabled       = body.Enabled,
+            RoutingMode   = body.RoutingMode ?? "direct",
+            RemoteAgentAe = body.RemoteAgentAe?.ToUpper(),
+            CreatedAt     = DateTime.UtcNow,
+            UpdatedAt     = DateTime.UtcNow,
         };
         db.AeDestinations.Add(dest);
         await db.SaveChangesAsync();
@@ -48,13 +50,15 @@ public static class DestinationEndpoints
         var dest = await db.AeDestinations.FindAsync(id);
         if (dest is null) return Results.NotFound();
 
-        dest.Name        = body.Name;
-        dest.AeTitle     = body.AeTitle.ToUpper();
-        dest.Host        = body.Host;
-        dest.Port        = body.Port;
-        dest.Description = body.Description;
-        dest.Enabled     = body.Enabled;
-        dest.UpdatedAt   = DateTime.UtcNow;
+        dest.Name          = body.Name;
+        dest.AeTitle       = body.AeTitle.ToUpper();
+        dest.Host          = body.Host;
+        dest.Port          = body.Port;
+        dest.Description   = body.Description;
+        dest.Enabled       = body.Enabled;
+        dest.RoutingMode   = body.RoutingMode ?? "direct";
+        dest.RemoteAgentAe = body.RemoteAgentAe?.ToUpper();
+        dest.UpdatedAt     = DateTime.UtcNow;
         await db.SaveChangesAsync();
         return Results.Ok(dest);
     }

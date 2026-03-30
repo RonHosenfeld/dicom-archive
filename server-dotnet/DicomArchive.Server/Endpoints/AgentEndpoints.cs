@@ -28,7 +28,7 @@ public static class AgentEndpoints
 
         var result = agents.Select(a => new
         {
-            a.Id, a.AeTitle, a.Host, a.Description, a.Enabled,
+            a.Id, a.AeTitle, a.Host, a.ListenPort, a.Description, a.Enabled,
             a.StorageBackend, a.Version,
             a.FirstSeen, a.LastSeen,
             a.InstancesReceived,

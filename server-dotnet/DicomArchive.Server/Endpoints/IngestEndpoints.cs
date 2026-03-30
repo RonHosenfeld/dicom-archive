@@ -26,9 +26,20 @@ public static class IngestEndpoints
         group.MapPost("/register",  Register);
         group.MapPost("/heartbeat", Heartbeat);
 
+        // Study/instance download endpoints for remote agents
+        group.MapGet("/studies/{studyUid}/instances", ListStudyInstances);
+        group.MapGet("/instances/{instanceUid}/download", DownloadInstance);
+
+        // Remote routing: polling + acknowledgment
+        group.MapGet("/pending-routes", PendingRoutes);
+        group.MapPost("/remote-routing/{id:int}/ack", AckRemoteRouting);
+
         // Manual routing (used by UI, does not require agent auth)
         app.MapPost("/api/route/instance/{instanceUid}/to/{destId:int}", RouteInstance);
         app.MapPost("/api/route/study/{studyUid}/to/{destId:int}",       RouteStudy);
+
+        // Remote routing log (used by UI)
+        app.MapGet("/api/remote-routing-log", RemoteRoutingLog);
     }
 
     /// <summary>
@@ -225,7 +236,10 @@ public static class IngestEndpoints
             instance.Series?.Exam?.Modality ?? "",
             instance.SendingAe             ?? "",
             instance.ReceivingAe           ?? "",
-            instance.Series?.BodyPart      ?? ""
+            instance.Series?.BodyPart      ?? "",
+            instance.Series?.Exam?.StudyUid         ?? "",
+            instance.Series?.Exam?.Description      ?? "",
+            instance.Series?.Exam?.ReferringPhysician ?? ""
         );
 
         if (queued > 0)
@@ -239,7 +253,9 @@ public static class IngestEndpoints
 
     // ── Register / Heartbeat ───────────────────────────────────────────────────
 
-    static async Task<IResult> Register(ArchiveDbContext db, [FromBody] AgentRegistration? body,
+    static async Task<IResult> Register(
+        ArchiveDbContext db,
+        [FromBody] AgentRegistration? body,
         ILogger<Program> logger)
     {
         if (body?.AeTitle is null) return Results.BadRequest("Missing body or ae_title");
@@ -253,6 +269,7 @@ public static class IngestEndpoints
         }
 
         agent.Host           = body.Host;
+        agent.ListenPort     = body.ListenPort     ?? agent.ListenPort;
         agent.StorageBackend = body.StorageBackend ?? agent.StorageBackend;
         agent.Version        = body.Version        ?? agent.Version;
         agent.LastSeen       = DateTime.UtcNow;
@@ -280,6 +297,141 @@ public static class IngestEndpoints
         await db.SaveChangesAsync();
 
         return Results.Ok(new { ok = true });
+    }
+
+    // ── Pending routes (polling endpoint for remote agents) ─────────────────────
+
+    static async Task<IResult> PendingRoutes(
+        ArchiveDbContext db,
+        ILogger<Program> logger,
+        [FromQuery(Name = "agent_ae")] string? agentAe)
+    {
+        if (string.IsNullOrEmpty(agentAe))
+            return Results.BadRequest(new { error = "Missing agent_ae query parameter" });
+
+        var ae = agentAe.ToUpper();
+
+        // Atomically claim up to 5 published entries for this agent using raw ADO.NET
+        // (EF Core's SqlQueryRaw cannot handle UPDATE ... RETURNING)
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+            await conn.OpenAsync();
+
+        var claimedIds = new List<int>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE remote_routing_log
+                SET status = 'claimed', claimed_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM remote_routing_log
+                    WHERE remote_agent_ae = @p0 AND status = 'published'
+                    ORDER BY published_at
+                    LIMIT 5
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id
+                """;
+            var p = cmd.CreateParameter();
+            p.ParameterName = "p0";
+            p.Value = ae;
+            cmd.Parameters.Add(p);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                claimedIds.Add(reader.GetInt32(0));
+        }
+
+        if (claimedIds.Count == 0)
+            return Results.Ok(Array.Empty<object>());
+
+        // Fetch destination details for the claimed entries
+        var entries = await db.RemoteRoutingLog
+            .Include(r => r.Destination)
+            .Where(r => claimedIds.Contains(r.Id))
+            .ToListAsync();
+
+        var result = entries.Select(e => new
+        {
+            id = e.Id,
+            study_uid = e.StudyUid,
+            destination_ae_title = e.Destination?.AeTitle,
+            destination_host = e.Destination?.Host,
+            destination_port = e.Destination?.Port ?? 104,
+            instance_count = e.InstanceCount,
+        }).ToList();
+
+        logger.LogInformation("Agent {Ae} claimed {Count} pending route(s)", ae, result.Count);
+        return Results.Ok(result);
+    }
+
+    // ── Study download for remote agents ────────────────────────────────────────
+
+    static async Task<IResult> ListStudyInstances(ArchiveDbContext db, string studyUid)
+    {
+        var instances = await db.Instances
+            .Where(i => i.Series.Exam.StudyUid == studyUid)
+            .Select(i => new
+            {
+                instance_uid = i.InstanceUid,
+                blob_key = i.BlobKey,
+                size_bytes = i.SizeBytes,
+                sha256 = i.Sha256,
+                series_uid = i.Series.SeriesUid,
+                modality = i.Series.Exam.Modality,
+            })
+            .ToListAsync();
+
+        return Results.Ok(instances);
+    }
+
+    static async Task<IResult> DownloadInstance(
+        ArchiveDbContext db,
+        DicomArchive.Server.Services.StorageService storage,
+        string instanceUid)
+    {
+        var instance = await db.Instances.FirstOrDefaultAsync(i => i.InstanceUid == instanceUid);
+        if (instance is null) return Results.NotFound(new { error = "Instance not found" });
+
+        var localPath = await storage.FetchToTempAsync(instance.BlobKey);
+        return Results.File(localPath, "application/dicom", $"{instanceUid}.dcm");
+    }
+
+    // ── Remote routing acknowledgment ────────────────────────────────────────────
+
+    static async Task<IResult> AckRemoteRouting(
+        ArchiveDbContext db, int id, ILogger<Program> logger)
+    {
+        var entry = await db.RemoteRoutingLog.FindAsync(id);
+        if (entry is null) return Results.NotFound(new { error = "Remote routing entry not found" });
+
+        entry.Status = "delivered";
+        entry.CompletedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        logger.LogInformation("Remote route {Id} acknowledged as delivered (study={StudyUid})", id, entry.StudyUid);
+        return Results.Ok(new { ok = true });
+    }
+
+    // ── Remote routing log ───────────────────────────────────────────────────────
+
+    static async Task<IResult> RemoteRoutingLog(ArchiveDbContext db, int limit = 50)
+    {
+        var log = await db.RemoteRoutingLog
+            .Include(r => r.Destination)
+            .Include(r => r.Rule)
+            .OrderByDescending(r => r.PublishedAt)
+            .Take(Math.Min(limit, 200))
+            .Select(r => new
+            {
+                r.Id, r.StudyUid, r.RemoteAgentAe, r.Status,
+                r.InstanceCount, r.InstancesDelivered,
+                r.LastError, r.PublishedAt, r.CompletedAt,
+                DestinationName = r.Destination != null ? r.Destination.Name : null,
+                RuleName = r.Rule != null ? r.Rule.Name : null,
+            })
+            .ToListAsync();
+        return Results.Ok(log);
     }
 
     // ── Manual routing (unchanged, no auth required) ───────────────────────────
@@ -351,3 +503,4 @@ public record ConfirmRequest
     public int InstanceId { get; init; }
     public string? Sha256 { get; init; }
 }
+

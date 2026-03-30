@@ -76,6 +76,8 @@ public class AeDestination
     public int Port { get; set; } = 104;
     public string? Description { get; set; }
     public bool Enabled { get; set; } = true;
+    public string RoutingMode { get; set; } = "direct";
+    public string? RemoteAgentAe { get; set; }
     public DateTime? CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
@@ -90,6 +92,8 @@ public class RoutingRule
     public string? MatchAeTitle { get; set; }
     public string? MatchReceivingAe { get; set; }
     public string? MatchBodyPart { get; set; }
+    public string? MatchDescriptionPattern { get; set; }
+    public string? MatchReferringPattern { get; set; }
     public bool OnReceive { get; set; }
     public string? Description { get; set; }
     public DateTime? CreatedAt { get; set; }
@@ -124,6 +128,26 @@ public class RoutingLogEntry
     public AeDestination? Destination { get; set; }
 }
 
+public class RemoteRoutingLogEntry
+{
+    public int Id { get; set; }
+    public string StudyUid { get; set; } = "";
+    public int? RuleId { get; set; }
+    public int? DestinationId { get; set; }
+    public string? RemoteAgentAe { get; set; }
+    public string Status { get; set; } = "published";
+    public string? ServiceBusMessageId { get; set; }
+    public int InstanceCount { get; set; }
+    public int InstancesDelivered { get; set; }
+    public string? LastError { get; set; }
+    public DateTime? PublishedAt { get; set; }
+    public DateTime? ClaimedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+
+    public RoutingRule? Rule { get; set; }
+    public AeDestination? Destination { get; set; }
+}
+
 public class Agent
 {
     public int Id { get; set; }
@@ -136,4 +160,5 @@ public class Agent
     public DateTime? FirstSeen { get; set; }
     public DateTime? LastSeen { get; set; }
     public long InstancesReceived { get; set; }
+    public int? ListenPort { get; set; }
 }
