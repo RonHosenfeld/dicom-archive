@@ -35,10 +35,12 @@ public static class DestinationEndpoints
             Port          = body.Port,
             Description   = body.Description,
             Enabled       = body.Enabled,
-            RoutingMode   = body.RoutingMode ?? "direct",
-            RemoteAgentAe = body.RemoteAgentAe?.ToUpper(),
-            CreatedAt     = DateTime.UtcNow,
-            UpdatedAt     = DateTime.UtcNow,
+            RoutingMode    = body.RoutingMode ?? "direct",
+            RemoteAgentAe  = body.RemoteAgentAe?.ToUpper(),
+            CoercionAction = NormalizeCoercion(body.CoercionAction),
+            CoercionPrefix = NormalizeCoercion(body.CoercionAction) != null ? body.CoercionPrefix?.Trim() : null,
+            CreatedAt      = DateTime.UtcNow,
+            UpdatedAt      = DateTime.UtcNow,
         };
         db.AeDestinations.Add(dest);
         await db.SaveChangesAsync();
@@ -56,9 +58,11 @@ public static class DestinationEndpoints
         dest.Port          = body.Port;
         dest.Description   = body.Description;
         dest.Enabled       = body.Enabled;
-        dest.RoutingMode   = body.RoutingMode ?? "direct";
-        dest.RemoteAgentAe = body.RemoteAgentAe?.ToUpper();
-        dest.UpdatedAt     = DateTime.UtcNow;
+        dest.RoutingMode    = body.RoutingMode ?? "direct";
+        dest.RemoteAgentAe  = body.RemoteAgentAe?.ToUpper();
+        dest.CoercionAction = NormalizeCoercion(body.CoercionAction);
+        dest.CoercionPrefix = NormalizeCoercion(body.CoercionAction) != null ? body.CoercionPrefix?.Trim() : null;
+        dest.UpdatedAt      = DateTime.UtcNow;
         await db.SaveChangesAsync();
         return Results.Ok(dest);
     }
@@ -79,4 +83,7 @@ public static class DestinationEndpoints
         var (ok, message) = await router.EchoAsync(dest.AeTitle, dest.Host, dest.Port);
         return Results.Ok(new { ok, message });
     }
+
+    private static string? NormalizeCoercion(string? action) =>
+        action is "add" or "remove" ? action : null;
 }

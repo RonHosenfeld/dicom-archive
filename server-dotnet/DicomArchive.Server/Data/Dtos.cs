@@ -8,7 +8,7 @@ record AgentHeartbeat(string AeTitle, long InstancesDelta);
 record AgentUpdate(string? Description, bool? Enabled);
 
 // DestinationEndpoints
-record DestinationIn(string Name, string AeTitle, string Host, int Port, string? Description, bool Enabled, string RoutingMode = "direct", string? RemoteAgentAe = null);
+record DestinationIn(string Name, string AeTitle, string Host, int Port, string? Description, bool Enabled, string RoutingMode = "direct", string? RemoteAgentAe = null, string? CoercionAction = null, string? CoercionPrefix = null);
 
 // RuleEndpoints
 record RuleIn(string Name, int Priority, bool Enabled, string? MatchModality, string? MatchAeTitle, string? MatchReceivingAe, string? MatchBodyPart, string? MatchDescriptionPattern, string? MatchReferringPattern, bool OnReceive, string? Description, List<int> DestinationIds);

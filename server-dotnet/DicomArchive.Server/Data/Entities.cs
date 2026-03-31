@@ -78,6 +78,8 @@ public class AeDestination
     public bool Enabled { get; set; } = true;
     public string RoutingMode { get; set; } = "direct";
     public string? RemoteAgentAe { get; set; }
+    public string? CoercionAction { get; set; }
+    public string? CoercionPrefix { get; set; }
     public DateTime? CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }

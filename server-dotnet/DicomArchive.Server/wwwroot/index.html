@@ -426,6 +426,22 @@
         <div class="form-hint">The remote agent that will pull and C-STORE the images to this destination's AE/host/port.</div>
       </div>
     </div>
+    <div class="form-group">
+      <label>Coercion</label>
+      <select id="destCoercionAction" onchange="toggleCoercionFields()">
+        <option value="">None</option>
+        <option value="add">Add Prefix</option>
+        <option value="remove">Remove Prefix</option>
+      </select>
+      <div class="form-hint">Prepend or strip a prefix on AccessionNumber and PatientID when routing to this destination.</div>
+    </div>
+    <div id="coercionFields" class="hidden">
+      <div class="form-group">
+        <label>Prefix *</label>
+        <input type="text" id="destCoercionPrefix" placeholder="e.g. ABC">
+        <div class="form-hint">The prefix to add or remove from AccessionNumber and PatientID.</div>
+      </div>
+    </div>
     <div class="form-check">
       <label class="toggle"><input type="checkbox" id="destEnabled" checked><span class="toggle-slider"></span></label>
       <span style="font-size:13px">Enabled</span>
@@ -1226,6 +1242,7 @@ async function loadDestinations() {
         ${d.routing_mode === 'remote'
           ? `<span class="badge badge-purple">Remote</span>${d.remote_agent_ae ? `<div class="text-muted" style="font-size:11px;margin-top:2px">Agent: ${esc(d.remote_agent_ae)}</div>` : ''}`
           : '<span class="badge badge-blue">Direct</span>'}
+        ${d.coercion_action ? `<div class="text-muted" style="font-size:11px;margin-top:2px">${d.coercion_action === 'add' ? '+' : '−'}Prefix: ${esc(d.coercion_prefix||'')}</div>` : ''}
       </td>
       <td>
         <div class="flex items-center gap-2">
@@ -1246,6 +1263,11 @@ async function loadDestinations() {
 function toggleRemoteFields() {
   const mode = document.getElementById('destRoutingMode').value;
   document.getElementById('remoteFields').classList.toggle('hidden', mode !== 'remote');
+}
+
+function toggleCoercionFields() {
+  const action = document.getElementById('destCoercionAction').value;
+  document.getElementById('coercionFields').classList.toggle('hidden', !action);
 }
 
 function populateRemoteAgentDropdown(selectedAE = '') {
@@ -1280,31 +1302,41 @@ function openDestModal(id = null) {
     document.getElementById('destDesc').value    = d.description || '';
     document.getElementById('destEnabled').checked = d.enabled;
     document.getElementById('destRoutingMode').value = d.routing_mode || 'direct';
+    document.getElementById('destCoercionAction').value = d.coercion_action || '';
+    document.getElementById('destCoercionPrefix').value = d.coercion_prefix || '';
     toggleRemoteFields();
+    toggleCoercionFields();
   } else {
-    ['destName','destAE','destHost','destDesc'].forEach(id => document.getElementById(id).value = '');
+    ['destName','destAE','destHost','destDesc','destCoercionPrefix'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('destPort').value = '104';
     document.getElementById('destEnabled').checked = true;
     document.getElementById('destRoutingMode').value = 'direct';
+    document.getElementById('destCoercionAction').value = '';
     toggleRemoteFields();
+    toggleCoercionFields();
   }
   openModal('destModal');
 }
 
 async function saveDest() {
   const routingMode = document.getElementById('destRoutingMode').value;
+  const coercionAction = document.getElementById('destCoercionAction').value || null;
+  const coercionPrefix = document.getElementById('destCoercionPrefix').value.trim() || null;
   const body = {
-    name:            document.getElementById('destName').value.trim(),
-    ae_title:        document.getElementById('destAE').value.trim().toUpperCase(),
-    host:            document.getElementById('destHost').value.trim(),
-    port:            parseInt(document.getElementById('destPort').value),
-    description:     document.getElementById('destDesc').value.trim() || null,
-    enabled:         document.getElementById('destEnabled').checked,
-    routing_mode:    routingMode,
-    remote_agent_ae: routingMode === 'remote' ? (document.getElementById('destRemoteAgentAE').value || null) : null,
+    name:             document.getElementById('destName').value.trim(),
+    ae_title:         document.getElementById('destAE').value.trim().toUpperCase(),
+    host:             document.getElementById('destHost').value.trim(),
+    port:             parseInt(document.getElementById('destPort').value),
+    description:      document.getElementById('destDesc').value.trim() || null,
+    enabled:          document.getElementById('destEnabled').checked,
+    routing_mode:     routingMode,
+    remote_agent_ae:  routingMode === 'remote' ? (document.getElementById('destRemoteAgentAE').value || null) : null,
+    coercion_action:  coercionAction,
+    coercion_prefix:  coercionAction ? coercionPrefix : null,
   };
   if (!body.name || !body.ae_title || !body.host) return toast('Name, AE Title and Host are required', 'error');
   if (routingMode === 'remote' && !body.remote_agent_ae) return toast('Remote Agent AE is required for remote destinations', 'error');
+  if (coercionAction && !coercionPrefix) return toast('Prefix is required when coercion is enabled', 'error');
   try {
     if (state.editingDest) {
       await api('PUT', `/destinations/${state.editingDest}`, body);

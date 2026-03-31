@@ -355,6 +355,7 @@ public static class IngestEndpoints
         {
             id = e.Id,
             study_uid = e.StudyUid,
+            destination_id = e.DestinationId,
             destination_ae_title = e.Destination?.AeTitle,
             destination_host = e.Destination?.Host,
             destination_port = e.Destination?.Port ?? 104,
@@ -388,12 +389,29 @@ public static class IngestEndpoints
     static async Task<IResult> DownloadInstance(
         ArchiveDbContext db,
         DicomArchive.Server.Services.StorageService storage,
-        string instanceUid)
+        string instanceUid,
+        [FromQuery(Name = "destination_id")] int? destinationId = null)
     {
         var instance = await db.Instances.FirstOrDefaultAsync(i => i.InstanceUid == instanceUid);
         if (instance is null) return Results.NotFound(new { error = "Instance not found" });
 
         var localPath = await storage.FetchToTempAsync(instance.BlobKey);
+
+        // Apply coercion if a destination with coercion settings is specified
+        if (destinationId.HasValue)
+        {
+            var dest = await db.AeDestinations.FindAsync(destinationId.Value);
+            if (dest is not null && !string.IsNullOrEmpty(dest.CoercionAction) && !string.IsNullOrEmpty(dest.CoercionPrefix))
+            {
+                var dicomFile = await FellowOakDicom.DicomFile.OpenAsync(localPath);
+                DicomArchive.Server.Services.CoercionService.Apply(dicomFile.Dataset, dest.CoercionAction, dest.CoercionPrefix);
+                var coercedPath = localPath + ".coerced.dcm";
+                await dicomFile.SaveAsync(coercedPath);
+                try { File.Delete(localPath); } catch { }
+                localPath = coercedPath;
+            }
+        }
+
         return Results.File(localPath, "application/dicom", $"{instanceUid}.dcm");
     }
 

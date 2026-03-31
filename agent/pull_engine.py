@@ -104,6 +104,7 @@ class PullEngine:
         dest_ae = command.get("destination_ae_title", "")
         dest_host = command.get("destination_host", "")
         dest_port = int(command.get("destination_port", 104))
+        dest_id = command.get("destination_id")
         routing_log_id = command.get("id")
 
         # 1. Get instance list for this study
@@ -121,7 +122,8 @@ class PullEngine:
         async def deliver_one(inst: dict) -> bool:
             async with sem:
                 return await self._deliver_instance(
-                    inst, dest_ae, dest_host, dest_port, worker_id
+                    inst, dest_ae, dest_host, dest_port, worker_id,
+                    destination_id=dest_id,
                 )
 
         results = await asyncio.gather(
@@ -139,11 +141,11 @@ class PullEngine:
 
     async def _deliver_instance(self, inst: dict, dest_ae: str,
                                 dest_host: str, dest_port: int,
-                                worker_id: int) -> bool:
+                                worker_id: int, destination_id: int | None = None) -> bool:
         instance_uid = inst.get("instance_uid", "")
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                tmp_path = await self._download_instance(instance_uid)
+                tmp_path = await self._download_instance(instance_uid, destination_id=destination_id)
                 if tmp_path is None:
                     logger.error("[W%d] Download failed for %s (attempt %d/%d)",
                                  worker_id, instance_uid, attempt, MAX_RETRIES)
@@ -189,10 +191,12 @@ class PullEngine:
             logger.warning("Instance list request failed: %s", e)
             return None
 
-    async def _download_instance(self, instance_uid: str) -> str | None:
+    async def _download_instance(self, instance_uid: str, destination_id: int | None = None) -> str | None:
         assert self._session
         try:
             url = f"{self.server_url}/ingest/instances/{instance_uid}/download"
+            if destination_id is not None:
+                url += f"?destination_id={destination_id}"
             async with self._session.get(url) as resp:
                 if resp.status != 200:
                     body = await resp.text()

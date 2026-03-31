@@ -250,6 +250,18 @@ public static class SchemaInitializer
         -- Partial index for pending remote routes (used by polling endpoint)
         CREATE INDEX IF NOT EXISTS idx_remote_routing_log_pending
             ON remote_routing_log(remote_agent_ae) WHERE status IN ('published', 'claimed');
+
+        -- Non-destructive migration: add coercion columns to ae_destinations
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='ae_destinations' AND column_name='coercion_action'
+          ) THEN
+            ALTER TABLE ae_destinations ADD COLUMN coercion_action TEXT;
+            ALTER TABLE ae_destinations ADD COLUMN coercion_prefix TEXT;
+          END IF;
+        END $$;
         """;
 
     public static async Task RunAsync(IServiceProvider services, ILogger logger)

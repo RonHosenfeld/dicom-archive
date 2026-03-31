@@ -98,6 +98,8 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
             e.Property(d => d.Enabled).HasColumnName("enabled");
             e.Property(d => d.RoutingMode).HasColumnName("routing_mode");
             e.Property(d => d.RemoteAgentAe).HasColumnName("remote_agent_ae");
+            e.Property(d => d.CoercionAction).HasColumnName("coercion_action");
+            e.Property(d => d.CoercionPrefix).HasColumnName("coercion_prefix");
             e.Property(d => d.CreatedAt).HasColumnName("created_at");
             e.Property(d => d.UpdatedAt).HasColumnName("updated_at");
         });

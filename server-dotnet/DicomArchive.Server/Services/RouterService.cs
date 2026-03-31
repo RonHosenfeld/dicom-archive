@@ -244,6 +244,10 @@ public class RouterService(
 
                     var localPath = await storage.FetchToTempAsync(entry.Instance!.BlobKey);
                     var dicomFile = await DicomFile.OpenAsync(localPath);
+
+                    if (!string.IsNullOrEmpty(dest.CoercionAction) && !string.IsNullOrEmpty(dest.CoercionPrefix))
+                        CoercionService.Apply(dicomFile.Dataset, dest.CoercionAction, dest.CoercionPrefix);
+
                     prepared.Add((entry, dicomFile, localPath));
                 }
                 catch (Exception ex)
@@ -417,6 +421,10 @@ public class RouterService(
             try
             {
                 var dicomFile = await DicomFile.OpenAsync(localPath);
+
+                if (!string.IsNullOrEmpty(dest.CoercionAction) && !string.IsNullOrEmpty(dest.CoercionPrefix))
+                    CoercionService.Apply(dicomFile.Dataset, dest.CoercionAction, dest.CoercionPrefix);
+
                 var (ok, error) = await CStoreAsync(dicomFile, dest.AeTitle, dest.Host, dest.Port);
 
                 entry.Attempts++;
