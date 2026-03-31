@@ -189,6 +189,7 @@ public class ArchiveDbContext(DbContextOptions<ArchiveDbContext> options) : DbCo
             e.Property(a => a.LastSeen).HasColumnName("last_seen");
             e.Property(a => a.InstancesReceived).HasColumnName("instances_received");
             e.Property(a => a.ListenPort).HasColumnName("listen_port");
+            e.Property(a => a.ConfigInstanceConcurrency).HasColumnName("config_instance_concurrency");
         });
     }
 }

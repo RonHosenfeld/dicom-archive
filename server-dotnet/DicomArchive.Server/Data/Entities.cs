@@ -163,4 +163,5 @@ public class Agent
     public DateTime? LastSeen { get; set; }
     public long InstancesReceived { get; set; }
     public int? ListenPort { get; set; }
+    public int? ConfigInstanceConcurrency { get; set; }
 }

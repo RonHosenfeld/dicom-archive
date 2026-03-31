@@ -54,6 +54,10 @@ class PullEngine:
         logger.info("Pull engine started with %d workers (poll_interval=%ds, instance_concurrency=%d)",
                      self.workers, self.poll_interval, self.instance_concurrency)
 
+    def update_concurrency(self, new_value: int):
+        self.instance_concurrency = new_value
+        logger.info("Pull engine instance concurrency updated to %d", new_value)
+
     async def stop(self):
         for task in self._tasks:
             task.cancel()

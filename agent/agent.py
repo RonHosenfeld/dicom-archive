@@ -135,6 +135,7 @@ def register_with_server():
     }, label="registration")
     if result and result.get("ok"):
         logger.info(f"Registered with server as [{AE_TITLE}]")
+        _apply_config(result.get("config"))
     else:
         logger.warning("Could not register with server — will retry on next heartbeat")
 
@@ -154,12 +155,29 @@ def _heartbeat_loop(interval: int = 60):
             }, label="heartbeat")
             if result is None:
                 register_with_server()
+            elif result.get("ok"):
+                _apply_config(result.get("config"))
 
     t = threading.Thread(target=beat, daemon=True, name="heartbeat")
     t.start()
     return _counter
 
 _instance_counter = {"since_last": 0}
+_pull_engine: PullEngine | None = None
+
+
+def _apply_config(config: dict | None):
+    """Apply server-pushed configuration to this agent."""
+    global INSTANCE_CONCURRENCY
+    if not config:
+        return
+    ic = config.get("instance_concurrency")
+    if ic is not None and ic != INSTANCE_CONCURRENCY:
+        old = INSTANCE_CONCURRENCY
+        INSTANCE_CONCURRENCY = ic
+        logger.info("Config update: instance_concurrency %d → %d", old, ic)
+        if _pull_engine is not None:
+            _pull_engine.update_concurrency(ic)
 
 
 # ── DICOM validation ──────────────────────────────────────────────────────────
@@ -304,7 +322,7 @@ def _start_async_loop(loop: asyncio.AbstractEventLoop, engine: UploadEngine):
 # ── Build and start the AE ────────────────────────────────────────────────────
 
 def run():
-    global upload_engine, _event_loop, _instance_counter
+    global upload_engine, _event_loop, _instance_counter, _pull_engine
 
     # ── Start upload engine in a background asyncio loop ──
     if SERVER_URL and AGENT_API_KEY:
@@ -366,14 +384,14 @@ def run():
                 name="pull-loop",
             )
             loop_thread.start()
-        pull_engine = PullEngine(
+        _pull_engine = PullEngine(
             server_url=SERVER_URL,
             api_key=AGENT_API_KEY,
             ae_title=AE_TITLE,
             workers=PULL_WORKERS,
             instance_concurrency=INSTANCE_CONCURRENCY,
         )
-        asyncio.run_coroutine_threadsafe(pull_engine.start(), _event_loop)
+        asyncio.run_coroutine_threadsafe(_pull_engine.start(), _event_loop)
         logger.info("Pull engine started (%d workers, polling server)", PULL_WORKERS)
 
     ae.start_server(

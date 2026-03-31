@@ -277,7 +277,10 @@ public static class IngestEndpoints
         await db.SaveChangesAsync();
         logger.LogInformation("Agent registered: [{AeTitle}] from {Host}", ae, body.Host);
 
-        return Results.Ok(new { ok = true, agent });
+        var config = new Dictionary<string, int>();
+        if (agent.ConfigInstanceConcurrency is int ic) config["instance_concurrency"] = ic;
+
+        return Results.Ok(new { ok = true, agent, config });
     }
 
     static async Task<IResult> Heartbeat(ArchiveDbContext db, [FromBody] AgentHeartbeat? body)
@@ -296,7 +299,10 @@ public static class IngestEndpoints
         agent.InstancesReceived += body.InstancesDelta;
         await db.SaveChangesAsync();
 
-        return Results.Ok(new { ok = true });
+        var config = new Dictionary<string, int>();
+        if (agent.ConfigInstanceConcurrency is int ic) config["instance_concurrency"] = ic;
+
+        return Results.Ok(new { ok = true, config });
     }
 
     // ── Pending routes (polling endpoint for remote agents) ─────────────────────

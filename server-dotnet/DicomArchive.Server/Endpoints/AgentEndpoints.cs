@@ -32,6 +32,7 @@ public static class AgentEndpoints
             a.StorageBackend, a.Version,
             a.FirstSeen, a.LastSeen,
             a.InstancesReceived,
+            config_instance_concurrency = a.ConfigInstanceConcurrency,
             Online    = a.LastSeen >= onlineCutoff,
             RuleCount = ruleCountByAe.GetValueOrDefault(a.AeTitle, 0),
         });
@@ -67,6 +68,7 @@ public static class AgentEndpoints
 
         if (body.Description is not null) agent.Description = body.Description;
         if (body.Enabled is not null)     agent.Enabled     = body.Enabled.Value;
+        agent.ConfigInstanceConcurrency = body.ConfigInstanceConcurrency;
         await db.SaveChangesAsync();
         return Results.Ok(agent);
     }

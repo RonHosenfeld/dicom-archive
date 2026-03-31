@@ -5,7 +5,7 @@ record AgentRegistration(string AeTitle, string Host, int? ListenPort, string? S
 record AgentHeartbeat(string AeTitle, long InstancesDelta);
 
 // AgentEndpoints
-record AgentUpdate(string? Description, bool? Enabled);
+record AgentUpdate(string? Description, bool? Enabled, int? ConfigInstanceConcurrency);
 
 // DestinationEndpoints
 record DestinationIn(string Name, string AeTitle, string Host, int Port, string? Description, bool Enabled, string RoutingMode = "direct", string? RemoteAgentAe = null, string? CoercionAction = null, string? CoercionPrefix = null);

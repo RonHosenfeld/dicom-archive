@@ -378,6 +378,14 @@
       <label class="toggle"><input type="checkbox" id="agentEnabled"><span class="toggle-slider"></span></label>
       <span style="font-size:13px">Enabled</span>
     </div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <label style="font-size:12px;font-weight:600;text-transform:uppercase;color:var(--text-muted);letter-spacing:.5px">Performance</label>
+      <div class="form-group" style="margin-top:6px">
+        <label>Instance Concurrency</label>
+        <input type="number" id="agentInstanceConcurrency" min="1" max="64" placeholder="default: 4">
+        <div class="form-hint">Max parallel instance downloads per study. Leave empty to use agent default.</div>
+      </div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveAgent()">Save</button>
@@ -1190,13 +1198,16 @@ function openAgentModal(id) {
   document.getElementById('agentAE').value      = a.ae_title;
   document.getElementById('agentDesc').value    = a.description || '';
   document.getElementById('agentEnabled').checked = a.enabled;
+  document.getElementById('agentInstanceConcurrency').value = a.config_instance_concurrency ?? '';
   openModal('agentModal');
 }
 
 async function saveAgent() {
+  const icVal = document.getElementById('agentInstanceConcurrency').value.trim();
   const body = {
     description: document.getElementById('agentDesc').value.trim() || null,
     enabled:     document.getElementById('agentEnabled').checked,
+    config_instance_concurrency: icVal ? parseInt(icVal) || null : null,
   };
   await api('PATCH', `/agents/${_editingAgentId}`, body);
   toast('Agent updated');

@@ -251,6 +251,17 @@ public static class SchemaInitializer
         CREATE INDEX IF NOT EXISTS idx_remote_routing_log_pending
             ON remote_routing_log(remote_agent_ae) WHERE status IN ('published', 'claimed');
 
+        -- Non-destructive migration: add config columns to agents
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='agents' AND column_name='config_instance_concurrency'
+          ) THEN
+            ALTER TABLE agents ADD COLUMN config_instance_concurrency INTEGER;
+          END IF;
+        END $$;
+
         -- Non-destructive migration: add coercion columns to ae_destinations
         DO $$
         BEGIN
