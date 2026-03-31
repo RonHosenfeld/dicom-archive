@@ -1,4 +1,7 @@
+using System.IO.Compression;
 using DicomArchive.Server.Data;
+using DicomArchive.Server.Services;
+using FellowOakDicom;
 using Microsoft.EntityFrameworkCore;
 
 namespace DicomArchive.Server.Endpoints;
@@ -13,6 +16,7 @@ public static class StudyEndpoints
         app.MapGet("/api/series/{seriesUid}/instances", GetSeriesInstances);
         app.MapGet("/api/instances/{instanceUid}", GetInstance);
         app.MapGet("/api/instances/{instanceUid}/file", DownloadInstance);
+        app.MapGet("/api/studies/{studyUid}/download", DownloadStudy);
         app.MapGet("/api/stats", GetStats);
     }
 
@@ -114,6 +118,93 @@ public static class StudyEndpoints
         File.Delete(path);
 
         return Results.File(bytes, "application/dicom", $"{instanceUid}.dcm");
+    }
+
+    static async Task DownloadStudy(
+        HttpContext httpContext,
+        ArchiveDbContext db,
+        StorageService storage,
+        string studyUid,
+        bool anonymize = false)
+    {
+        var seriesList = await db.Series
+            .Include(s => s.Instances)
+            .Where(s => s.Exam.StudyUid == studyUid)
+            .OrderBy(s => s.SeriesNumber)
+            .ToListAsync();
+
+        var allInstances = seriesList.SelectMany(s => s.Instances).ToList();
+        if (allInstances.Count == 0)
+        {
+            httpContext.Response.StatusCode = 404;
+            return;
+        }
+
+        // Allow sync IO for this request only — ZipArchive.Dispose writes the
+        // central directory synchronously and there is no async ZipArchive API.
+        // This lets us stream directly to the response instead of buffering the
+        // entire ZIP in memory, which matters for large exams (100MB+).
+        var syncIoFeature = httpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpBodyControlFeature>();
+        if (syncIoFeature is not null)
+            syncIoFeature.AllowSynchronousIO = true;
+
+        httpContext.Response.ContentType = "application/zip";
+        httpContext.Response.Headers["Content-Disposition"] =
+            $"attachment; filename=\"{studyUid}.zip\"";
+
+        // Stream the ZIP directly to the response body so the browser receives
+        // bytes immediately and large exams don't consume server memory.
+        using var zip = new ZipArchive(httpContext.Response.Body, ZipArchiveMode.Create, leaveOpen: true);
+
+        var seriesIndex = 0;
+        foreach (var series in seriesList)
+        {
+            seriesIndex++;
+            var seriesFolder = $"Series_{seriesIndex:D3}";
+            if (!string.IsNullOrWhiteSpace(series.Description))
+                seriesFolder += $"_{SanitizeFileName(series.Description)}";
+
+            var instanceIndex = 0;
+            foreach (var instance in series.Instances.OrderBy(i => i.InstanceNumber))
+            {
+                instanceIndex++;
+                string? tempPath = null;
+                string? anonPath = null;
+                try
+                {
+                    tempPath = await storage.FetchToTempAsync(instance.BlobKey);
+
+                    var sourcePath = tempPath;
+                    if (anonymize)
+                    {
+                        var dcmFile = await DicomFile.OpenAsync(tempPath);
+                        AnonymizationService.Anonymize(dcmFile.Dataset);
+                        anonPath = Path.Combine(Path.GetTempPath(), $"dcm_anon_{Guid.NewGuid():N}.dcm");
+                        await dcmFile.SaveAsync(anonPath);
+                        sourcePath = anonPath;
+                    }
+
+                    var entryName = $"{seriesFolder}/IMG_{instanceIndex:D3}.dcm";
+                    var entry = zip.CreateEntry(entryName, CompressionLevel.Fastest);
+                    await using var entryStream = entry.Open();
+                    await using var fileStream = File.OpenRead(sourcePath);
+                    await fileStream.CopyToAsync(entryStream);
+                }
+                finally
+                {
+                    if (tempPath is not null && File.Exists(tempPath))
+                        File.Delete(tempPath);
+                    if (anonPath is not null && File.Exists(anonPath))
+                        File.Delete(anonPath);
+                }
+            }
+        }
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray()).Trim();
     }
 
     static async Task<IResult> GetStats(ArchiveDbContext db)

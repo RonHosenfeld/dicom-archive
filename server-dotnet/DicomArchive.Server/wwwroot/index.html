@@ -548,6 +548,27 @@
     </div>
   </div>
 
+  <!-- Download Study Modal -->
+  <div class="modal hidden" id="downloadStudyModal">
+    <div class="modal-title">Download Study</div>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">Download all instances as a single ZIP file.</p>
+    <div class="form-group">
+      <label>Study</label>
+      <input type="text" id="downloadStudyUID" readonly style="font-family:monospace;font-size:12px">
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="downloadAnonymize" style="width:auto">
+        Anonymize patient data
+      </label>
+      <span style="color:var(--muted);font-size:12px">Replaces patient name, ID, and other identifying information with "ANONYMOUS"</span>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmDownloadStudy()">⬇ Download ZIP</button>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -748,6 +769,7 @@ async function renderStudyList(filters = {}) {
                     ${state.destinations.filter(d=>d.enabled).map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}
                   </select>
                   <button class="btn btn-sm btn-green" onclick="routeStudyFromRow('${s.study_uid}')">▶</button>
+                  <button class="btn btn-sm btn-secondary" onclick="openDownloadStudyModal('${s.study_uid}')" title="Download study as ZIP">⬇</button>
                 </div>
               </td>
             </tr>`).join('')
@@ -801,6 +823,7 @@ async function openStudy(studyUid, patientLabel, studyDate) {
   view.innerHTML = `
     <div style="margin-bottom:12px">
       <button class="btn btn-secondary btn-sm" onclick="openStudyHeader('${studyUid}')">🏷 View DICOM Header</button>
+      <button class="btn btn-secondary btn-sm" onclick="openDownloadStudyModal('${studyUid}')">⬇ Download Study</button>
     </div>
     <div class="table-wrap">
       <table>
@@ -1526,6 +1549,22 @@ async function confirmRouteStudy() {
   if (!destId) return toast('Select a destination', 'error');
   await api('POST', `/route/study/${_pendingRouteStudy}/to/${destId}`);
   toast(`Routing study queued → ${state.destinations.find(d=>d.id==destId)?.name}`);
+  closeModal();
+}
+
+// ── Download study modal ──────────────────────────────────────────────────────
+let _pendingDownloadStudy = null;
+
+function openDownloadStudyModal(studyUid) {
+  _pendingDownloadStudy = studyUid;
+  document.getElementById('downloadStudyUID').value = studyUid;
+  document.getElementById('downloadAnonymize').checked = false;
+  openModal('downloadStudyModal');
+}
+
+function confirmDownloadStudy() {
+  const anonymize = document.getElementById('downloadAnonymize').checked;
+  window.location.href = `/api/studies/${_pendingDownloadStudy}/download?anonymize=${anonymize}`;
   closeModal();
 }
 
