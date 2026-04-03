@@ -88,6 +88,47 @@ public class StorageService(IConfiguration config, ILogger<StorageService> logge
     }
 
     /// <summary>
+    /// Generates a time-limited read URL for a blob (SAS for Azure, pre-signed for S3).
+    /// Local storage falls back to the server-proxied endpoint.
+    /// </summary>
+    public (string Url, DateTime ExpiresAt) GenerateReadUrl(string blobKey, string instanceUid)
+    {
+        switch (_backend.ToLower())
+        {
+            case "azure":
+                return GenerateAzureReadUrl(blobKey);
+            case "s3":
+                throw new NotImplementedException(
+                    "S3 pre-signed read URLs: add AWSSDK.S3 and implement GenerateS3ReadUrl.");
+            case "local":
+                // Local storage: return server-proxied URL
+                var expiry = DateTime.UtcNow.AddMinutes(30);
+                return ($"/api/instances/{instanceUid}/file", expiry);
+            default:
+                throw new InvalidOperationException($"Unknown STORAGE_BACKEND: {_backend}");
+        }
+    }
+
+    private (string Url, DateTime ExpiresAt) GenerateAzureReadUrl(string blobKey)
+    {
+        var container = GetBlobContainer();
+        var blobClient = container.GetBlobClient(blobKey);
+
+        var expiry = DateTimeOffset.UtcNow.AddMinutes(30);
+        var sasBuilder = new Azure.Storage.Sas.BlobSasBuilder
+        {
+            BlobContainerName = container.Name,
+            BlobName          = blobKey,
+            Resource          = "b",
+            ExpiresOn         = expiry,
+        };
+        sasBuilder.SetPermissions(Azure.Storage.Sas.BlobSasPermissions.Read);
+
+        var sasUri = blobClient.GenerateSasUri(sasBuilder);
+        return (sasUri.ToString(), expiry.UtcDateTime);
+    }
+
+    /// <summary>
     /// Returns the permanent retrieval URI for a stored blob.
     /// Local: absolute file path; Azure: blob URL; S3: S3 URI.
     /// </summary>

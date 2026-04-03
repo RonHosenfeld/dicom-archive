@@ -18,6 +18,9 @@ public static class WadoEndpoints
         app.MapGet(
             "/wado/studies/{studyUid}/series/{seriesUid}/instances/{instanceUid}/metadata",
             Metadata);
+
+        app.MapGet("/api/series/{seriesUid}/viewer-urls", ViewerUrls);
+        app.MapGet("/api/instances/{instanceUid}/blob-url", BlobUrl);
     }
 
     static async Task<IResult> RetrieveInstance(
@@ -53,5 +56,51 @@ public static class WadoEndpoints
             .FirstOrDefaultAsync(i => i.InstanceUid == instanceUid);
 
         return inst is null ? Results.NotFound() : Results.Ok(inst);
+    }
+
+    /// <summary>
+    /// Returns viewer-ready URLs for all instances in a series.
+    /// For cloud backends these are pre-signed blob URLs; for local storage,
+    /// they fall back to the server-proxied /api/instances/{uid}/file endpoint.
+    /// </summary>
+    static async Task<IResult> ViewerUrls(
+        ArchiveDbContext db, StorageService storage, string seriesUid)
+    {
+        var instances = await db.Instances
+            .Where(i => i.Series.SeriesUid == seriesUid)
+            .OrderBy(i => i.InstanceNumber)
+            .ToListAsync();
+
+        if (instances.Count == 0) return Results.NotFound();
+
+        var urls = instances.Select(i =>
+        {
+            var (url, expiresAt) = storage.GenerateReadUrl(i.BlobKey, i.InstanceUid);
+            return new
+            {
+                instanceUid    = i.InstanceUid,
+                instanceNumber = i.InstanceNumber,
+                url,
+                rows           = i.Rows,
+                columns        = i.Columns,
+                expiresAt      = expiresAt.ToString("o"),
+            };
+        }).ToList();
+
+        return Results.Ok(urls);
+    }
+
+    /// <summary>
+    /// Returns a single blob URL for one instance (used for single-instance viewing).
+    /// </summary>
+    static async Task<IResult> BlobUrl(
+        ArchiveDbContext db, StorageService storage, string instanceUid)
+    {
+        var inst = await db.Instances
+            .FirstOrDefaultAsync(i => i.InstanceUid == instanceUid);
+        if (inst is null) return Results.NotFound();
+
+        var (url, expiresAt) = storage.GenerateReadUrl(inst.BlobKey, inst.InstanceUid);
+        return Results.Ok(new { url, expiresAt = expiresAt.ToString("o") });
     }
 }

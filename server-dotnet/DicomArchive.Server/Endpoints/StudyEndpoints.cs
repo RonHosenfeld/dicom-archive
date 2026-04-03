@@ -68,7 +68,13 @@ public static class StudyEndpoints
     {
         var exam = await db.Exams
             .Include(e => e.Patient)
-            .FirstOrDefaultAsync(e => e.StudyUid == studyUid);
+            .Where(e => e.StudyUid == studyUid)
+            .Select(e => new {
+                e.Id, e.StudyUid, e.StudyDate, e.StudyTime, e.Accession,
+                e.Description, e.Modality, e.ReferringPhysician,
+                Patient = new { e.Patient.PatientId, e.Patient.Name, e.Patient.BirthDate, e.Patient.Sex },
+            })
+            .FirstOrDefaultAsync();
         return exam is null ? Results.NotFound() : Results.Ok(exam);
     }
 

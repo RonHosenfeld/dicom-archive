@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DICOM Archive</title>
+  <script src="https://unpkg.com/dicom-parser@1.8.21/dist/dicomParser.min.js"></script>
+  <script src="https://unpkg.com/cornerstone-core@2.6.1/dist/cornerstone.min.js"></script>
+  <script src="https://unpkg.com/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://unpkg.com/cornerstone-tools@6.0.10/dist/cornerstoneTools.min.js"></script>
   <style>
     :root {
       --bg: #0b0f1a; --surface: #131825; --surface2: #1c2235;
@@ -183,6 +187,29 @@
     .bar-value { width: 90px; font-size: 11px; color: var(--text); font-variant-numeric: tabular-nums; }
     .metrics-section { margin-bottom: 28px; }
     .metrics-section-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+
+    /* DICOM Viewer */
+    #viewerPanel { position: fixed; inset: 0; z-index: 900; background: #000; display: flex; flex-direction: column; }
+    #viewerPanel.hidden { display: none !important; }
+    .viewer-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+    .viewer-toolbar .btn-icon { color: var(--text); font-size: 16px; }
+    .viewer-toolbar .spacer { flex: 1; }
+    #viewerInfo { font-size: 13px; color: var(--text); font-weight: 500; }
+    #viewerImageIndex { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    #viewerLoadTime { font-size: 11px; color: var(--muted); }
+    .viewer-body { display: flex; flex: 1; min-height: 0; }
+    .viewer-thumbs { width: 120px; background: var(--surface); border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .viewer-thumb { padding: 8px 6px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 11px; color: var(--muted); text-align: center; word-break: break-word; transition: all 0.15s; }
+    .viewer-thumb:hover { border-color: var(--accent); color: var(--text); }
+    .viewer-thumb.active { border-color: var(--accent); color: var(--accent); background: rgba(79,142,247,0.1); }
+    .viewer-viewport { flex: 1; position: relative; min-width: 0; }
+    #viewerCanvas { width: 100%; height: 100%; }
+    .viewer-mode-toggle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 4px; }
+    .viewer-mode-toggle button { background: none; border: none; color: var(--muted); font-size: 11px; padding: 2px 8px; border-radius: 4px; cursor: pointer; }
+    .viewer-mode-toggle button.active { background: var(--accent); color: #fff; }
+    .viewer-tool-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 5px; cursor: pointer; }
+    .viewer-tool-btn:hover { color: var(--text); border-color: var(--accent); }
+    .viewer-tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -354,6 +381,33 @@
     </div>
 
   </main>
+</div>
+
+<!-- DICOM Viewer Panel -->
+<div id="viewerPanel" class="hidden">
+  <div class="viewer-toolbar">
+    <button class="btn-icon" onclick="closeViewer()" title="Close viewer">✕</button>
+    <span id="viewerInfo"></span>
+    <span id="viewerImageIndex"></span>
+    <div class="spacer"></div>
+    <button class="viewer-tool-btn active" id="toolWL" onclick="setViewerTool('wl')" title="Window/Level (left drag)">W/L</button>
+    <button class="viewer-tool-btn" id="toolZoom" onclick="setViewerTool('zoom')" title="Zoom (left drag)">Zoom</button>
+    <button class="viewer-tool-btn" id="toolPan" onclick="setViewerTool('pan')" title="Pan (left drag)">Pan</button>
+    <button class="viewer-tool-btn" onclick="resetViewerView()" title="Reset window/level and zoom">Reset</button>
+    <div class="viewer-mode-toggle">
+      <button id="modeServer" class="active" onclick="setLoadingMode('server')">Server</button>
+      <button id="modeBlob" onclick="setLoadingMode('blob')">Blob</button>
+    </div>
+    <span id="viewerLoadTime"></span>
+    <select id="viewerSeriesSelect" style="width:auto;max-width:200px;font-size:12px;padding:4px 24px 4px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;color:var(--text)" onchange="switchSeries(this.value)">
+    </select>
+  </div>
+  <div class="viewer-body">
+    <div class="viewer-thumbs" id="viewerThumbs"></div>
+    <div class="viewer-viewport">
+      <div id="viewerCanvas"></div>
+    </div>
+  </div>
 </div>
 
 <!-- Toasts -->
@@ -794,6 +848,7 @@ async function renderStudyList(filters = {}) {
                   </select>
                   <button class="btn btn-sm btn-green" onclick="routeStudyFromRow('${s.study_uid}')">▶</button>
                   <button class="btn btn-sm btn-secondary" onclick="openDownloadStudyModal('${s.study_uid}')" title="Download study as ZIP">⬇</button>
+                  <button class="btn btn-sm btn-primary" onclick="openViewer('study','${s.study_uid}')" title="View images">👁</button>
                 </div>
               </td>
             </tr>`).join('')
@@ -861,7 +916,9 @@ async function openStudy(studyUid, patientLabel, studyDate) {
             <td>${s.laterality ? `<span class="badge badge-purple">${s.laterality}</span>` : '—'}</td>
             <td>${s.view_position ? `<span class="badge badge-blue">${s.view_position}</span>` : '—'}</td>
             <td>${s.instance_count}</td>
-            <td><span class="badge badge-muted">Click to view instances</span></td>
+            <td onclick="event.stopPropagation()" style="white-space:nowrap">
+              <button class="btn btn-sm btn-primary" onclick="openViewer('series','${s.series_uid}')" title="View images">👁 View</button>
+            </td>
           </tr>`).join('')}
         </tbody>
       </table>
@@ -898,6 +955,7 @@ async function openSeries(seriesUid, seriesLabel) {
             <td class="font-mono" style="font-size:10px" title="${i.sha256}">${i.sha256?.slice(0,12)+'…' || '—'}</td>
             <td>
               <div class="flex gap-2">
+                <button class="btn btn-sm btn-primary" onclick="openViewer('instance','${i.instance_uid}')" title="View image">👁</button>
                 <button class="btn btn-sm btn-secondary" onclick="openInstanceHeader('${i.instance_uid}')" title="View DICOM tags">🏷</button>
                 <a href="/api/instances/${i.instance_uid}/file" download class="btn btn-sm btn-secondary">⬇ DCM</a>
                 <select class="route-select" id="rsel_i_${i.instance_uid}">
@@ -1944,5 +2002,6 @@ document.addEventListener('visibilitychange', () => {
   loadDashboard();
 })();
 </script>
+<script src="viewer.js"></script>
 </body>
 </html>
