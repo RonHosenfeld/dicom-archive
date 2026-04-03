@@ -19,6 +19,7 @@
   function loadDicomImage(imageId) {
     var url = imageId.substring(imageId.indexOf(':') + 1);
 
+    console.log('Custom loader fetching:', url);
     var promise = fetch(url)
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status + ' loading ' + url);
@@ -199,15 +200,23 @@
   }
 
   // ── Image loading ──────────────────────────────────────────────────────────
+  function isMixedContent(url) {
+    return location.protocol === 'https:' && url.startsWith('http://');
+  }
+
   async function buildImageIds(seriesUid, instanceUids) {
     if (_loadingMode === 'blob') {
       try {
         var resp = await fetch('/api/series/' + seriesUid + '/viewer-urls');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         var urls = await resp.json();
-        return urls.map(function (e) { return 'wadouri:' + e.url; });
+        if (urls.length > 0 && urls[0].url && isMixedContent(urls[0].url)) {
+          toast('Blob URLs are HTTP but page is HTTPS — using server proxy instead', 'info');
+        } else {
+          return urls.map(function (e) { return 'wadouri:' + e.url; });
+        }
       } catch (err) {
-        console.warn('Blob URL fetch failed, falling back to server mode:', err);
+        console.warn('Blob URL fetch failed, falling back to server mode:', errMsg(err));
       }
     }
     return instanceUids.map(function (uid) { return 'wadouri:/api/instances/' + uid + '/file'; });
@@ -219,9 +228,11 @@
         var resp = await fetch('/api/instances/' + instanceUid + '/blob-url');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         var data = await resp.json();
-        return 'wadouri:' + data.url;
+        if (data.url && !isMixedContent(data.url)) {
+          return 'wadouri:' + data.url;
+        }
       } catch (err) {
-        console.warn('Blob URL fetch failed, falling back to server mode:', err);
+        console.warn('Blob URL fetch failed, falling back to server mode:', errMsg(err));
       }
     }
     return 'wadouri:/api/instances/' + instanceUid + '/file';
@@ -406,9 +417,12 @@
     });
   }
 
+  var _loadingSeq = 0; // guards against stale loads after mode switch
+
   function setLoadingMode(mode) {
     if (mode !== 'server' && mode !== 'blob') return;
     _loadingMode = mode;
+    _loadingSeq++;
     var serverBtn = document.getElementById('modeServer');
     var blobBtn = document.getElementById('modeBlob');
     if (serverBtn) serverBtn.classList.toggle('active', mode === 'server');
@@ -416,6 +430,7 @@
     if (_currentSeriesUid) {
       loadSeries(_currentSeriesUid).catch(function (err) {
         console.error('Mode switch reload failed:', err);
+        if (typeof toast === 'function') toast('Mode switch failed: ' + errMsg(err), 'error');
       });
     }
   }
