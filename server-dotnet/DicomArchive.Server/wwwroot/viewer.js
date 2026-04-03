@@ -152,9 +152,12 @@
     cs.enable(el);
     _element = el;
 
+    // Prevent browser context menu so right-click Zoom works
+    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
     // Add tools
     csTools.addToolForElement(el, csTools.WwwcTool);
-    csTools.addToolForElement(el, csTools.ZoomTool);
+    csTools.addToolForElement(el, csTools.ZoomTool, { invert: false, minScale: 0.1, maxScale: 20 });
     csTools.addToolForElement(el, csTools.PanTool);
     csTools.addToolForElement(el, csTools.StackScrollMouseWheelTool);
 
@@ -441,9 +444,18 @@
     var csName = map[toolName];
     if (!csName) return;
 
+    // Deactivate all three tools to clear stale mouse-button bindings
+    csTools.setToolDisabledForElement(_element, 'Wwwc');
+    csTools.setToolDisabledForElement(_element, 'Zoom');
+    csTools.setToolDisabledForElement(_element, 'Pan');
+
+    // Selected tool on left-click
     csTools.setToolActiveForElement(_element, csName, { mouseButtonMask: 1 });
-    if (toolName !== 'zoom') csTools.setToolActiveForElement(_element, 'Zoom', { mouseButtonMask: 2 });
-    if (toolName !== 'pan') csTools.setToolActiveForElement(_element, 'Pan', { mouseButtonMask: 4 });
+
+    // Other two tools on right-click and middle-click
+    var others = { wl: ['Zoom', 'Pan'], zoom: ['Wwwc', 'Pan'], pan: ['Wwwc', 'Zoom'] };
+    csTools.setToolActiveForElement(_element, others[toolName][0], { mouseButtonMask: 2 });
+    csTools.setToolActiveForElement(_element, others[toolName][1], { mouseButtonMask: 4 });
 
     document.querySelectorAll('.viewer-tool-btn[id^="tool"]').forEach(function (btn) {
       btn.classList.remove('active');
