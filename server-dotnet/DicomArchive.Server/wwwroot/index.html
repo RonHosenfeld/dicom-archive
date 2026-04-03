@@ -6,6 +6,7 @@
   <title>DICOM Archive</title>
   <script src="https://unpkg.com/dicom-parser@1.8.21/dist/dicomParser.min.js"></script>
   <script src="https://unpkg.com/cornerstone-core@2.6.1/dist/cornerstone.min.js"></script>
+  <script src="https://unpkg.com/cornerstone-math@0.1.10/dist/cornerstoneMath.min.js"></script>
   <script src="https://unpkg.com/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://unpkg.com/cornerstone-tools@6.0.10/dist/cornerstoneTools.min.js"></script>
   <style>
@@ -203,7 +204,7 @@
     .viewer-thumb:hover { border-color: var(--accent); color: var(--text); }
     .viewer-thumb.active { border-color: var(--accent); color: var(--accent); background: rgba(79,142,247,0.1); }
     .viewer-viewport { flex: 1; position: relative; min-width: 0; }
-    #viewerCanvas { width: 100%; height: 100%; }
+    #viewerCanvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; -webkit-user-select: none; user-select: none; outline: none; }
     .viewer-mode-toggle { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 4px; }
     .viewer-mode-toggle button { background: none; border: none; color: var(--muted); font-size: 11px; padding: 2px 8px; border-radius: 4px; cursor: pointer; }
     .viewer-mode-toggle button.active { background: var(--accent); color: #fff; }

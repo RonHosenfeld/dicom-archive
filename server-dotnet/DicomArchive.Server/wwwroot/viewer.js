@@ -120,8 +120,9 @@
       // Register our custom DICOM image loader for the wadouri scheme
       cs.registerImageLoader('wadouri', loadDicomImage);
 
-      // Initialise cornerstone-tools
+      // Initialise cornerstone-tools with all required externals
       csTools.external.cornerstone = cs;
+      csTools.external.cornerstoneMath = cornerstoneMath;
       csTools.external.Hammer = Hammer;
       csTools.init();
 
@@ -166,6 +167,11 @@
     csTools.setToolActiveForElement(el, 'Zoom', { mouseButtonMask: 2 });
     csTools.setToolActiveForElement(el, 'Pan', { mouseButtonMask: 4 });
     csTools.setToolActiveForElement(el, 'StackScrollMouseWheel', {});
+
+    // Debug: log mouse events to verify they reach the element
+    el.addEventListener('mousedown', function (e) {
+      console.log('viewerCanvas mousedown — button:', e.button, 'buttons:', e.buttons);
+    });
 
     // Image index tracking
     el.addEventListener('cornerstoneimagerendered', _onImageRendered);
@@ -450,6 +456,7 @@
     csTools.setToolDisabledForElement(_element, 'Pan');
 
     // Selected tool on left-click
+    console.log('setViewerTool:', toolName, '→', csName, 'on left-click');
     csTools.setToolActiveForElement(_element, csName, { mouseButtonMask: 1 });
 
     // Other two tools on right-click and middle-click
